@@ -84,13 +84,7 @@ def _get_system_username():
         import pwd
         return pwd.getpwuid(os.getuid())[0]
     else:
-        try:
-            import win32api
-            import win32security
-            import win32profile
-            return win32api.GetUserName()
-        except:
-            return os.environ['USERNAME']
+        return os.environ['USERNAME']
 
 # Options/settings which exist both as environment keys and which can be set
 # on the command line, are defined here. When used via `fab` they will be added

@@ -34,15 +34,7 @@ def rc_path():
     if not win32:
         return os.path.expanduser("~/" + state.env.settings_file)
     else:
-        try:
-            from win32com.shell.shell import SHGetSpecialFolderPath
-            from win32com.shell.shellcon import CSIDL_PROFILE
-            return "%s/%s" % (
-                SHGetSpecialFolderPath(0,CSIDL_PROFILE),
-                state.env.settings_file
-            )
-        except:
-            return "%s/%s" % (os.environ['USERPROFILE'], state.env.settings_file)
+        return os.path.join(os.environ['USERPROFILE'], state.env.settings_file)
 
 
 def load_settings(path):
