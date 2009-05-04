@@ -8,7 +8,7 @@ Work in progress!
 This website and its documentation are still being written and updated during
 Fabric 0.9's alpha and beta periods. We are providing them to you now because
 any documentation is better than no documentation, but please keep in mind that
-many things here are subject to change or may lack documentation.
+many things here are subject to change or may need fleshing out.
 
 
 About
@@ -25,9 +25,8 @@ Latest stable version
 
 The most recent stable version of Fabric is |release|. The recommended
 installation method is to use ``easy_install`` or ``pip``; or you may download
-TGZ or ZIP archives from `the Fabric cgit page <http://git.fabfile.org>`_.
-Detailed install instructions for any of these methods can be found on the
-:doc:`installation` page.
+TGZ or ZIP source archives from a couple of official locations.  Detailed
+instructions and links may be found on the :doc:`installation` page.
 
 Development version
 -------------------
@@ -65,6 +64,15 @@ team directly at ``developers [at] fabfile [dot] org``.
     getting prompt feedback, and also allows other users to confirm your bug
     report and thus give it a higher priority.
 
+Wiki
+----
+
+There is an official Fabric wiki reachable at `wiki.fabfile.org
+<http://wiki.fabfile.org>`_, although as of this writing its usage patterns are
+still being worked out. There is a `TodoList page
+<http://wiki.fabfile.org/TodoList>`_ which may also be used to submit bug
+reports, as an alternative to sending email.
+
 
 Documentation
 =============
@@ -72,19 +80,10 @@ Documentation
 .. toctree::
     :maxdepth: 2
 
-    usage
-    compatibility
-    development
-
-
-Getting Fabric
-==============
-
-.. toctree::
-    :maxdepth: 2
-
     installation
     development
+    usage
+    compatibility
 
 
 API
