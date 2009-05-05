@@ -491,14 +491,14 @@ def local(command, show_stderr=True, capture=True):
     PIPE = subprocess.PIPE
     # User wants to interact with whatever was called, instead of capturing
     if not capture:
-        p = subprocess.Popen([command], shell=True)
+        p = subprocess.Popen(command, shell=True)
     # User wants stdout captured but wants stderr printed to terminal instead
     # of discarded
     elif show_stderr:
-        p = subprocess.Popen([command], shell=True, stdout=PIPE)
+        p = subprocess.Popen(command, shell=True, stdout=PIPE)
     # Capture both and discard stderr
     else:
-        p = subprocess.Popen([command], shell=True, stdout=PIPE, stderr=PIPE)
+        p = subprocess.Popen(command, shell=True, stdout=PIPE, stderr=PIPE)
     (stdout, stderr) = p.communicate()
     # Handle error condition
     if p.returncode != 0:
