@@ -320,7 +320,7 @@ def get(remote_path, local_path):
 
 
 @needs_host
-def run(command, shell=True, interpreter=env.shell):
+def run(command, shell=True):
     """
     Run a shell command on a remote host.
 
@@ -330,13 +330,6 @@ def run(command, shell=True, interpreter=env.shell):
     ``/bin/bash -l -c "<command>"``.) Any double-quote (``"``) characters in
     ``command`` will be automatically escaped when ``shell`` is True.
     
-    If ``interpreter`` is specified with the call, the default shell interpreter
-    will be overridden when executing the command string. This can be useful for
-    calling commands with different interpreters in the same fabfile.
-    Example use: 
-    1) run(command,interpreter='cmd.exe /c') for windows
-    2) run('import os;print os.environ;',interpreter='python -c') for executing a python string.
-
     `run` will return the result of the remote program's stdout as a
     single (likely multiline) string. This string will exhibit a ``failed``
     boolean attribute specifying whether the command failed or succeeded, and
@@ -351,7 +344,7 @@ def run(command, shell=True, interpreter=env.shell):
     """
     real_command = command
     if shell:
-        real_command = '%s "%s"' % (interpreter, command.replace('"', '\\"'))
+        real_command = '%s "%s"' % (env.shell, command.replace('"', '\\"'))
     # TODO: possibly put back in previously undocumented 'confirm_proceed'
     # functionality, i.e. users may set an option to be prompted before each
     # execution. Pretty sure this should be a global option applying to ALL
