@@ -45,6 +45,25 @@ def _handle_failure(message, exception=None):
         func(message)
 
 
+def _shell_escape(string):
+    r"""
+    Escape double quotes and backslashes in given ``string``.
+
+    Backslashes are escaped first, followed by double quotes (so that the
+    backslashes added to escape double quotes are not themselves escaped.)
+
+    Example transformations:
+
+    ==========  ===============
+    ``foo``     ``foo``
+    ``"foo"``   ``\"foo\"``
+    ``\"foo\"`` ``\\\"foo\\\"``
+    ==========  ===============
+
+    """
+    return string.replace('\\', r'\\').replace(r'"', r'\"')
+
+
 class _AttributeString(str):
     """
     Simple string subclass to allow arbitrary attribute access.
@@ -344,22 +363,25 @@ def run(command, shell=True):
     """
     real_command = command
     if shell:
-        real_command = '%s "%s"' % (env.shell, command.replace('"', '\\"'))
+        real_command = '%s "%s"' % (env.shell, _shell_escape(command))
     # TODO: possibly put back in previously undocumented 'confirm_proceed'
     # functionality, i.e. users may set an option to be prompted before each
     # execution. Pretty sure this should be a global option applying to ALL
     # remote operations! And, of course -- documented.
     # TODO: tie this into global output controls
-    # TODO: also, for this and sudo(), allow output of real_command too
-    # (possibly as part of a 'debug' flag?)
-    print("[%s] run: %s" % (env.host_string, command))
+    if env.debug:
+        print("[%s] run: %s" % (env.host_string, real_command))
+    else:
+        print("[%s] run: %s" % (env.host_string, command))
     channel = connections[env.host_string]._transport.open_session()
     channel.exec_command(real_command)
     capture = []
 
     # TODO: tie into global output controls
-    out_thread = output_thread("[%s] out" % env.host_string, channel, capture=capture)
-    err_thread = output_thread("[%s] err" % env.host_string, channel, stderr=True)
+    out_thread = output_thread("[%s] out" % env.host_string, channel,
+        capture=capture)
+    err_thread = output_thread("[%s] err" % env.host_string, channel,
+        stderr=True)
     
     # Close when done
     status = channel.recv_exit_status()
@@ -424,16 +446,19 @@ def sudo(command, shell=True, user=None):
     sudo_prefix = sudo_prefix % env.sudo_prompt
     # Without using a shell, we just do 'sudo -u blah my_command'
     if (not env.use_shell) or (not shell):
-        real_command = "%s %s" % (sudo_prefix, command.replace('"', r'\"'))
+        real_command = "%s %s" % (sudo_prefix, _shell_escape(command))
     # With a shell, we do 'sudo -u blah /bin/bash -l -c "my_command"'
     else:
         real_command = '%s %s "%s"' % (sudo_prefix, env.shell,
-            command.replace('"', r'\"'))
+           _shell_escape(command))
     # TODO: tie this into global output controls; both in terms of showing the
     # shell itself, AND showing the sudo prefix. Not 100% sure it's worth being
     # so granular as to allow one on and one off, but think about it.
     # TODO: handle confirm_proceed behavior, as in run()
-    print("[%s] sudo: %s" % (env.host_string, command))
+    if env.debug:
+        print("[%s] sudo: %s" % (env.host_string, real_command))
+    else:
+        print("[%s] sudo: %s" % (env.host_string, command))
     channel = connections[env.host_string]._transport.open_session()
     channel.exec_command(real_command)
     capture = []
