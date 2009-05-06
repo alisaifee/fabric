@@ -6,7 +6,33 @@ from contextlib import contextmanager
 
 from state import env
 
+@contextmanager
+def shell( interpreter ):
+    """
+    Context manager which temporarily sets ``env.shell`` to the value
+    supplied by the ``interpreter`` argument.
+    
+    Example uses:
+        with shell('python -c'):
+            print run('import socket;print "hello from python on %s" % socket.gethostname();')
+        with shell('perl -e'):
+            print run('use Sys::Hostname;print "hello from perl on ".hostname;');
 
+    .. note:: `shell` must always be called with parentheses (``with
+        shell(interpreter):``) as it is actually a simple context manager factory,
+        and not a context manager itself.
+
+    .. note:: Remember that on Python 2.5, you will need to start your fabfile
+        with ``from __future__ import with_statement`` in order to make use of
+        this feature.
+    """
+    _prev_interpreter = env.shell
+    env.shell = interpreter 
+    
+    # yield now so that commands in this context run with the supplied arugments.
+    yield 
+
+    env.shell = _prev_interpreter
 @contextmanager
 def warnings_only():
     """
