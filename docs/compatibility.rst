@@ -135,20 +135,20 @@ In no particular order:
       authors, not fab users (even though the former is a subset of the latter)
       and should stay in the documentation only.
 
-* `prompt` has been updated to behave more obviously, as its previous
-  behavior was confusing in a few ways:
+* `prompt`'s primary function is now to return a value to the caller, although
+  it may still optionally store the value in `env` as well.
+* `prompt` now considers the empty string to be valid input; this allows other
+  functions to wrap `prompt` and handle "empty" input on their own terms.
+* In addition to the above changes, `prompt` has been updated to behave more
+  obviously, as its previous behavior was confusing in a few ways:
 
     * It will now overwrite pre-existing values in the environment dict, but
       will print a warning to the user if it does so.
-    * Additionally, validation used to fire even if the variable already
-      existed in the environment dict. This presented a handful of odd
-      behaviors, and has been fixed: `prompt` will now only execute if the
-      requested variable does not have a value in the environment dict. 
-    * Also additionally, (and this appeared to be undocumented) the ``default``
+    * Additionally, (and this appeared to be undocumented) the ``default``
       argument could take a callable as well as a string, and would simply set
       the default message to the return value if a callable was given. This
-      doesn't make much sense (the user can just do ``prompt(blah, msg,
-      default=my_callable()`` after all) so it has been removed.
+      seemed to add unnecessary complexity (the user can just do ``prompt(blah,
+      msg, default=my_callable()`` after all) so it has been removed.
 
 * When connecting, Fabric used to use the undocumented ``fab_pkey`` env variable
   as a method of passing in a Paramiko ``PKey`` object to the SSH client's

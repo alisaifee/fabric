@@ -140,6 +140,11 @@ env_options = [
         dest='abort_on_failure',
         default=True,
         help="warn, instead of abort, when commands fail"
+    ),
+
+    make_option('-s', '--shell',
+        default='/bin/bash -l -c',
+        help="specify a new shell, defaults to '/bin/bash -l -c'"
     )
 
     # TODO: verbosity selection (sets state var(s) used when printing)
@@ -147,9 +152,6 @@ env_options = [
     # multiple levels, e.g. -vvv, OR could specifically enable/disable stuff,
     # e.g. --no-warnings / --no-echo (no echoing commands) / --no-stdout / etc.
     
-    # TODO: shell-setting option? (or just use --let? an explicit option might
-    # make it slightly easier to handle quote issues...)
-
 ]
 
 # Global environment dict. Currently a catchall for everything: config settings
@@ -161,7 +163,6 @@ env = _AttributeDict({
     'version': get_version(),
     # Filename of Fab settings file
     'settings_file': '.fabricrc',
-    'shell': '/bin/bash -l -c',
     'sudo_prompt': 'sudo password:',
     'quiet': False,
     'use_shell': True
