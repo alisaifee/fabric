@@ -24,12 +24,22 @@ from utils import abort, indent, warn
 
 
 # One-time calculation of "all internal callables" to avoid doing this on every
-# check of a given fabfile callable (in is_task())
-_mods = [api, project, files]
-_internals = reduce(lambda x, y: x + filter(callable, vars(y).values()),
-    _mods,
-    []
-)
+# check of a given fabfile callable (in is_task()). Also generally useful for
+# introspection (by e.g. our own fabfile which uses this info to help tweak
+# some of the documentation)
+_modules = [api, project, files]
+internals = {} # Kept public for introspection
+_internal_callables = [] # Convenience "cache" of just the callables.
+for module in _modules:
+    for name, item in vars(module).iteritems():
+        if callable(item) and item not in _internal_callables:
+            internals[name] = {
+                'callable': item,
+                # Need to use item.__module__ here to get REAL module;
+                # also strip out first item which is 'fabric.'.
+                'module_name': '.'.join(item.__module__.split('.')[1:])
+            }
+            _internal_callables.append(item)
 
 
 def rc_path():
@@ -96,7 +106,7 @@ def is_task(tup):
     name, func = tup
     return (
         callable(func)
-        and (func not in _internals)
+        and (func not in _internal_callables)
         and not name.startswith('_')
     )
 
@@ -198,9 +208,11 @@ def list_commands():
     # Want separator between name, description to be straight col
     max_len = reduce(lambda a, b: max(a, len(b)), commands.keys(), 0)
     sep = '  '
-    for name, func in commands.items():
+    names = sorted(commands.keys())
+    for name in names:
         output = None
         # Print first line of docstring
+        func = commands[name]
         if func.__doc__:
             lines = filter(None, func.__doc__.splitlines())
             first_line = lines[0].strip()
