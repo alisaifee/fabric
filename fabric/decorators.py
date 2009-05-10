@@ -3,7 +3,28 @@ Convenience decorators for use in fabfiles.
 """
 
 from functools import wraps
+from fabric.state import env
+from fabric.utils import abort,indent,warn,args2str
 
+def fabricop (fn):
+    func = env.abort_on_failure and abort or warn
+    def function_handler(*args,**kwargs):
+        try:
+            if not env.quiet:
+                print("[%s] %s: %s" % \
+                      (env.host_string, fn.__name__, args2str(*args,**kwargs)))
+            return fn(*args,**kwargs)
+        except Exception,e:
+            if hasattr(e, 'strerror'):
+                underlying_msg = e.strerror
+            else:
+                underlying_msg = e
+            func("%s %s\n\nUnderlying exception message:\n%s" % (
+                  fn.__name__,
+                  args2str(*args,**kwargs),
+                  indent(underlying_msg)
+                ))
+    return function_handler
 
 def hosts(*host_list):
     """
