@@ -7,6 +7,23 @@ from fabric.state import env
 from fabric.utils import abort,indent,warn,args2str
 
 def fabricop (fn):
+    """
+    Decorator defining a fabric operation to be used in fabfiles.
+
+    For example, the following will ensure that, when my_fabricop
+    is called without my_var under a warnings_only() scope, 
+    the execution is not terminated and is simply logged as a 
+    warning::
+    
+        @fabricop
+        def my_fabricop(**kwargs):
+            if 'my_var' not in kwargs.keys():
+                raise AttributeError("my_var not defined")
+            
+        with warnings_only():
+            my_fabricop()
+
+    """
     func = env.abort_on_failure and abort or warn
     def function_handler(*args,**kwargs):
         try:
