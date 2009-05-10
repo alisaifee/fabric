@@ -54,12 +54,3 @@ def indent(text, spaces=4, strip=False):
     # Reintroduce first indent (which just got stripped out)
     output = prefix + output
     return output
-
-def args2str(*args,**kwargs):
-    _listtostr = lambda args:",".join(["'%s'"%k for k in args]) if args else None
-    _dicttostr = lambda kwargs:",".join(["%s='%s'"%(k,kwargs[k]) for k in kwargs]) \
-                 if kwargs else None
-    str = ""
-    l,d=_listtostr(args),_dicttostr(kwargs)
-    
-    return l+","+d if (d and l) else d or l
