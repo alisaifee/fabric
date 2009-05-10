@@ -12,14 +12,39 @@ def setenv(**kwargs):
     """
     Context manager which temporarily sets a variable list of environment variables.
     
-    Example uses:
-        with setenv(debug=True):
-            ....
-        with setenv(debug=True, quiet=False):
-            ....
-        
-        with setenv(shell='cmd.exe /c', debug=True):
-            ....
+    `setenv` will preserve and then reinstate the previous value of
+    the keyword arguments provided in the context_manager, so it will 
+    not affect the global state of those variables, outside of its nested scope.
+
+    The use of the below example will result in debug statments being printed out
+    regardless of the command line usage::
+    
+        def my_task():
+            with setenv(debug=True):
+                run('ls')
+
+    The use of the below example will result in quiet mode being disabled in the 
+    scope of the with statement::
+    
+        def my_task():
+            with setenv(quiet=False):
+                run('ls')
+
+    The use of the below example will result in the run statement getting executed 
+    using the cmd.exe shell for windows::
+    
+        def my_task():
+            with setenv(shell='cmd.exe /c', debug=True):
+                run('dir')
+    
+    .. note:: `setenv` must always be called with parentheses (``with
+        setenv():``) as it is actually a simple context manager factory,
+        and not a context manager itself.
+
+    .. note:: Remember that on Python 2.5, you will need to start your fabfile
+        with ``from __future__ import with_statement`` in order to make use of
+        this feature.
+
     """
     global env
     _pre_env = env

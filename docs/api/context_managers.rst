@@ -3,4 +3,4 @@ Context Managers
 ================
 
 .. automodule:: fabric.context_managers
-    :members: warnings_only,shell
+    :members: warnings_only, setenv
