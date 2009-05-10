@@ -3,36 +3,39 @@ Context managers for use with the ``with`` statement.
 """
 
 from contextlib import contextmanager
-
 from state import env
+from utils import indent,args2str
+import sys
 
 @contextmanager
-def shell( interpreter ):
+def setenv(**kwargs):
     """
-    Context manager which temporarily sets ``env.shell`` to the value
-    supplied by the ``interpreter`` argument.
+    Context manager which temporarily sets a variable list of environment variables.
     
     Example uses:
-        with shell('python -c'):
-            print run('import socket;print "hello from python on %s" % socket.gethostname();')
-        with shell('perl -e'):
-            print run('use Sys::Hostname;print "hello from perl on ".hostname;');
-
-    .. note:: `shell` must always be called with parentheses (``with
-        shell(interpreter):``) as it is actually a simple context manager factory,
-        and not a context manager itself.
-
-    .. note:: Remember that on Python 2.5, you will need to start your fabfile
-        with ``from __future__ import with_statement`` in order to make use of
-        this feature.
+        with setenv(debug=True):
+            ....
+        with setenv(debug=True, quiet=False):
+            ....
+        
+        with setenv(shell='cmd.exe /c', debug=True):
+            ....
     """
-    _prev_interpreter = env.shell
-    env.shell = interpreter 
+    global env
+    _pre_env = env
+    _pre_env_mod = {}
+    [_pre_env_mod.setdefault(k,env.setdefault(k,None)) for k in kwargs] 
+    if env.debug:
+        print >> sys.stdout, indent("settings environment variables %s" % args2str(**kwargs))
+    env.update(kwargs)
     
-    # yield now so that commands in this context run with the supplied arugments.
-    yield 
+    yield
 
-    env.shell = _prev_interpreter
+    env = _pre_env
+    if env.debug:
+        print >> sys.stdout, indent("resettings environment variables %s" % args2str(**_pre_env_mod))
+    
+
 @contextmanager
 def warnings_only():
     """
