@@ -17,40 +17,19 @@ import textwrap
 
 from fabric import api # For checking callables against the API 
 from fabric.contrib import project, files # Ditto
-from network import normalize
+from network import denormalize, normalize
 import state # For easily-mockable access to roles, env and etc
-from state import commands, env_options, win32
+from state import commands, connections, env_options, win32
 from utils import abort, indent, warn
 
 
 # One-time calculation of "all internal callables" to avoid doing this on every
-# check of a given fabfile callable (in is_task()). Also generally useful for
-# introspection (by e.g. our own fabfile which uses this info to help tweak
-# some of the documentation)
+# check of a given fabfile callable (in is_task()).
 _modules = [api, project, files]
-internals = {} # Kept public for introspection
-_internal_callables = [] # Convenience "cache" of just the callables.
-for module in _modules:
-    for name, item in vars(module).iteritems():
-        if callable(item) and item not in _internal_callables:
-            internals[name] = {
-                'callable': item,
-                # Need to use item.__module__ here to get REAL module;
-                # also strip out first item which is 'fabric.'.
-                'module_name': '.'.join(item.__module__.split('.')[1:])
-            }
-            _internal_callables.append(item)
-
-
-def rc_path():
-    """
-    Return platform-specific file path for $HOME/<env.settings_file>.
-    """
-    if not win32:
-        return os.path.expanduser("~/" + state.env.settings_file)
-    else:
-        return os.path.join(os.environ['USERPROFILE'], state.env.settings_file)
-
+_internals = reduce(lambda x, y: x + filter(callable, vars(y).values()),
+    _modules,
+    []
+)
 
 def load_settings(path):
     """
@@ -106,7 +85,7 @@ def is_task(tup):
     name, func = tup
     return (
         callable(func)
-        and (func not in _internal_callables)
+        and (func not in _internals)
         and not name.startswith('_')
     )
 
@@ -172,17 +151,6 @@ def parse_options():
         help="print detailed info about a given command and exit"
     )
 
-    # TODO: specify nonstandard fabricrc file (and call load_settings() on it)
-    # -c ? --config ? --fabricrc ? --rcfile ?
-    # what are some commonly used flags for conf file specification?
-
-    # TODO: explicitly specify "fabfile(s)" to load.
-    # - Can specify multiple times
-    # - Disables implicit "local" fabfile discovery/loading
-    #   - or should the default be to "append" to the implicitly loaded fabfile?
-    #   - either way, also add a flag to toggle that append/disable behavior
-    # Flags: -f ? --fabfile ? --source ? what are some common flags?
-
     # TODO: old 'let' functionality, i.e. global env additions/overrides
     # maybe "set" as the keyword? i.e. -s / --set x=y
     # allow multiple times (like with tar --exclude)
@@ -242,7 +210,7 @@ def display_command(command):
 
 def parse_arguments(arguments):
     """
-    Parse string list into list of 4-tuples: command name, args, kwargs, hosts.
+    Parse string list into list of tuples: command, args, kwargs, hosts, roles.
 
     Parses the given list of arguments into command names and, optionally,
     per-command args/kwargs. Per-command args are attached to the command name
@@ -259,7 +227,7 @@ def parse_arguments(arguments):
     If ``host`` or ``hosts`` kwargs are given, they will be used to fill
     Fabric's host list (see `get_hosts`). ``hosts`` will override
     ``host`` if both are given.
-    
+
     When using ``hosts`` in this way, one must use semicolons (``;``), and must
     thus quote the host list string to prevent shell interpretation.
 
@@ -273,51 +241,75 @@ def parse_arguments(arguments):
     ``host`` and ``hosts`` are removed from the kwargs mapping at this point, so
     commands are not required to expect them. Thus, the resulting call of the
     above example would be ``ping_servers(foo=bar)``.
+
+    ``role`` or ``roles`` behave the same as ``host``/``hosts``, but are used
+    as role names (which will eventually be turned into additional hosts).
+
+    Host- and role-related arguments may be specified simultaneously, in which
+    case they will be merged into a single effective host list.
     """
     cmds = []
     for cmd in arguments:
         args = []
         kwargs = {}
         hosts = []
+        roles = []
         if ':' in cmd:
             cmd, argstr = cmd.split(':', 1)
             for pair in argstr.split(','):
                 k, _, v = pair.partition('=')
                 if v:
-                    # Catch, interpret host/hosts kwargs
-                    if k in ['host', 'hosts']:
+                    # Catch, interpret host/hosts/role/roles kwargs
+                    if k in ['host', 'hosts', 'role', 'roles']:
                         if k == 'host':
                             hosts = [v.strip()]
                         elif k == 'hosts':
                             hosts = [x.strip() for x in v.split(';')]
+                        elif k == 'role':
+                            roles = [v.strip()]
+                        elif k == 'roles':
+                            roles = [x.strip() for x in v.split(';')]
                     # Otherwise, record as usual
                     else:
                         kwargs[k] = v
                 else:
                     args.append(k)
-        cmds.append((cmd, args, kwargs, hosts))
+        cmds.append((cmd, args, kwargs, hosts, roles))
     return cmds
 
 
-def get_hosts(cli_hosts, command):
+def _merge(hosts, roles):
+    """
+    Merge given host and role lists into one list of deduped hosts.
+    """
+    # Look up roles, turn into flat list of hosts
+    role_hosts = (
+        roles
+        and reduce(add, [state.env.roledefs[y] for y in roles])
+        or []
+    )
+    # Return deduped combo of hosts and role_hosts
+    return list(set(hosts + role_hosts))
+
+
+
+def get_hosts(command, cli_hosts, cli_roles):
     """
     Return the host list the given command should be using.
 
     See :ref:`execution-model` for detailed documentation on how host lists are
     set.
     """
-    # Command line takes precedence over anythin else.
-    if cli_hosts:
-        return cli_hosts
-    # Decorator-specific hosts/roles go next and are unioned.
+    # Command line per-command takes precedence over anything else.
+    if cli_hosts or cli_roles:
+        return _merge(cli_hosts, cli_roles)
+    # Decorator-specific hosts/roles go next
     func_hosts = getattr(command, 'hosts', [])
     func_roles = getattr(command, 'roles', [])
     if func_hosts or func_roles:
-        role_hosts = (func_roles and reduce(add, [state.roles[y] for y in
-            func_roles]) or [])
-        return list(set(func_hosts + role_hosts))
-    # Finally, the env is checked (which might contain values from the CLI or
-    # from module-level code).
+        return _merge(func_hosts, func_roles)
+    # Finally, the env is checked (which might contain globally set lists from
+    # the CLI or from module-level code).
     if state.env.get('hosts'):
         return state.env.hosts
     # Empty list is the default if nothing is found.
@@ -329,107 +321,111 @@ def main():
     Main command-line execution loop.
     """
     try:
-        try:
-            # Parse command line options
-            parser, options, arguments = parse_options()
+        # Parse command line options
+        parser, options, arguments = parse_options()
 
-            # Update env with any overridden option values
-            # NOTE: This needs to remain the first thing that occurs
-            # post-parsing, since so many things hinge on the values in env.
-            for option in env_options:
-                state.env[option.dest] = getattr(options, option.dest)
+        # Update env with any overridden option values
+        # NOTE: This needs to remain the first thing that occurs
+        # post-parsing, since so many things hinge on the values in env.
+        for option in env_options:
+            state.env[option.dest] = getattr(options, option.dest)
 
-            # Handle version number option
-            if options.show_version:
-                print "Fabric " + state.env.version
-                sys.exit(0)
+        # Handle version number option
+        if options.show_version:
+            print("Fabric %s" % state.env.version)
+            sys.exit(0)
 
-            # Load settings from user settings file, into shared env dict.
-            state.env.update(load_settings(rc_path()))
+        # Load settings from user settings file, into shared env dict.
+        state.env.update(load_settings(state.env.rcfile))
 
-            # Find local fabfile path or abort
-            fabfile = find_fabfile()
-            if not fabfile:
-                abort("Couldn't find any fabfiles!")
+        # Find local fabfile path or abort
+        fabfile = find_fabfile()
+        if not fabfile:
+            abort("Couldn't find any fabfiles!")
 
-            # Store absolute path to fabfile in case anyone needs it
-            state.env.real_fabfile = fabfile
+        # Store absolute path to fabfile in case anyone needs it
+        state.env.real_fabfile = fabfile
 
-            # Load fabfile (which calls its module-level code, including
-            # tweaks to env values) and put its commands in the shared commands
-            # dict
-            commands.update(load_fabfile(fabfile))
+        # Load fabfile (which calls its module-level code, including
+        # tweaks to env values) and put its commands in the shared commands
+        # dict
+        commands.update(load_fabfile(fabfile))
 
-            # Abort if no commands found
-            # TODO: continue searching for fabfiles if one we selected doesn't
-            # contain any callables? Bit of an edge case, but still...
-            if not commands:
-                abort("Fabfile didn't contain any commands!")
+        # Abort if no commands found
+        if not commands:
+            abort("Fabfile didn't contain any commands!")
 
-            # Handle list-commands option (now that commands are loaded)
-            if options.list_commands:
-                list_commands()
+        # Handle list-commands option (now that commands are loaded)
+        if options.list_commands:
+            list_commands()
 
-            # Handle show (command-specific help) option
-            if options.display:
-                display_command(options.display)
+        # Handle show (command-specific help) option
+        if options.display:
+            display_command(options.display)
 
-            # If user didn't specify any commands to run, show help
-            if not arguments:
-                parser.print_help()
-                sys.exit(0) # Or should it exit with error (1)?
+        # If user didn't specify any commands to run, show help
+        if not arguments:
+            parser.print_help()
+            sys.exit(0) # Or should it exit with error (1)?
 
-            # Parse arguments into commands to run (plus args/kwargs/hosts)
-            commands_to_run = parse_arguments(arguments)
-            
-            # Figure out if any specified names are invalid
-            unknown_commands = []
-            for tup in commands_to_run:
-                if tup[0] not in commands:
-                    unknown_commands.append(tup[0])
+        # Parse arguments into commands to run (plus args/kwargs/hosts)
+        commands_to_run = parse_arguments(arguments)
 
-            # Abort if any unknown commands were specified
-            if unknown_commands:
-                abort("Command(s) not found:\n%s" \
-                    % indent(unknown_commands))
+        # Figure out if any specified names are invalid
+        unknown_commands = []
+        for tup in commands_to_run:
+            if tup[0] not in commands:
+                unknown_commands.append(tup[0])
 
-            # At this point all commands must exist, so execute them in order.
-            for name, args, kwargs, cli_hosts in commands_to_run:
-                # Get callable by itself
-                command = commands[name]
-                # Set current command name (used for some error messages)
-                state.env.command = name
-                # Set host list
-                hosts = get_hosts(cli_hosts, command)
-                # If hosts found, execute the function on each host in turn
-                for host in hosts:
-                    username, hostname, port = normalize(host)
-                    state.env.host_string = host
-                    state.env.host = hostname
-                    # Preserve user
-                    prev_user = state.env.user
-                    state.env.user = username
-                    state.env.port = port
-                    # Actually run command
-                    commands[name](*args, **kwargs)
-                    # Put old user back
-                    state.env.user = prev_user
-                # If no hosts found, assume local-only and run once
-                if not hosts:
-                    commands[name](*args, **kwargs)
-            # If we got here, no errors occurred, so print a final note.
+        # Abort if any unknown commands were specified
+        if unknown_commands:
+            abort("Command(s) not found:\n%s" \
+                % indent(unknown_commands))
+
+        # At this point all commands must exist, so execute them in order.
+        for name, args, kwargs, cli_hosts, cli_roles in commands_to_run:
+            # Get callable by itself
+            command = commands[name]
+            # Set current command name (used for some error messages)
+            state.env.command = name
+            # Set host list
+            hosts = get_hosts(command, cli_hosts, cli_roles)
+            # If hosts found, execute the function on each host in turn
+            for host in hosts:
+                username, hostname, port = normalize(host)
+                state.env.host_string = host
+                state.env.host = hostname
+                # Preserve user
+                prev_user = state.env.user
+                state.env.user = username
+                state.env.port = port
+                # Actually run command
+                commands[name](*args, **kwargs)
+                # Put old user back
+                state.env.user = prev_user
+            # If no hosts found, assume local-only and run once
+            if not hosts:
+                commands[name](*args, **kwargs)
+        # If we got here, no errors occurred, so print a final note.
+        if state.output.status:
             print("\nDone.")
-        finally:
-            # TODO: explicit disconnect?
-            pass
     except SystemExit:
         # a number of internal functions might raise this one.
         raise
     except KeyboardInterrupt:
-        print >>sys.stderr, "\nStopped."
+        if state.output.status:
+            print >>sys.stderr, "\nStopped."
         sys.exit(1)
     except:
         sys.excepthook(*sys.exc_info())
         # we might leave stale threads if we don't explicitly exit()
         sys.exit(1)
+    finally:
+        # Explicitly disconnect from all servers
+        for key in connections.keys():
+            if state.output.status:
+                print "Disconnecting from %s..." % denormalize(key),
+            connections[key].close()
+            if state.output.status:
+                print "done."
     sys.exit(0)

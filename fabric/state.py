@@ -32,7 +32,7 @@ win32 = sys.platform in ['win32', 'cygwin']
 
 
 #
-# Environment dictionary
+# Environment dictionary - support structures
 # 
 
 class _AttributeDict(dict):
@@ -86,26 +86,50 @@ def _get_system_username():
     else:
         return os.environ['USERNAME']
 
+def _rc_path():
+    """
+    Return platform-specific default file path for $HOME/.fabricrc.
+    """
+    rc_file = '.fabricrc'
+    if not win32:
+        return os.path.expanduser("~/" + rc_file)
+    else:
+        from win32com.shell.shell import SHGetSpecialFolderPath
+        from win32com.shell.shellcon import CSIDL_PROFILE
+        return "%s/%s" % (
+            SHGetSpecialFolderPath(0,CSIDL_PROFILE),
+            rc_file
+        )
+
+
 # Options/settings which exist both as environment keys and which can be set
 # on the command line, are defined here. When used via `fab` they will be added
 # to the optparse parser, and either way they are added to `env` below (i.e.
 # the 'dest' value becomes the environment key and the value, the env value).
 #
 # Keep in mind that optparse changes hyphens to underscores when automatically
-# deriving the `dest` name, e.g. `--reject-unknown-keys` becomes
-# `reject_unknown_keys`.
+# deriving the `dest` name, e.g. `--reject-unknown-hosts` becomes
+# `reject_unknown_hosts`.
 #
 # Furthermore, *always* specify some sort of default to avoid ending up with
 # optparse.NO_DEFAULT (currently a two-tuple)! None is better than ''.
 env_options = [
 
-    # By default, we accept unknown host keys. This option allows users to
+    # By default, we accept unknown hosts' keys. This option allows users to
     # disable that behavior (which means Fabric will raise an exception and
     # terminate when an unknown host key is received from a server).
-    make_option('-R', '--reject-unknown-keys',
+    make_option('-r', '--reject-unknown-hosts',
         action='store_true',
         default=False,
-        help="reject unknown host keys"
+        help="reject unknown hosts"
+    ),
+
+    # By default, we load the user's ~/.ssh/known_hosts file. In some cases
+    # users may not want this to occur.
+    make_option('-D', '--disable-known-hosts',
+        action='store_true',
+        default=False,
+        help="do not load user known_hosts file"
     ),
 
     # Username
@@ -118,6 +142,18 @@ env_options = [
     make_option('-p', '--password',
         default=None,
         help="password for use with authentication and/or sudo"
+    ),
+
+    # Global host list
+    make_option('-H', '--hosts',
+        default=None,
+        help="comma-separated list of hosts to operate on"
+    ),
+
+    # Global role list
+    make_option('-R', '--roles',
+        default=None,
+        help="comma-separated list of roles to operate on"
     ),
 
     # Private key file
@@ -136,9 +172,8 @@ env_options = [
 
     # Default error-handling behavior
     make_option('-w', '--warn-only',
-        action='store_false',
-        dest='abort_on_failure',
-        default=True,
+        action='store_true',
+        default=False,
         help="warn, instead of abort, when commands fail"
     ),
 
@@ -153,7 +188,14 @@ env_options = [
     make_option('--debug',
         action='store_true',
         default=False,
-        help="Display debug output"
+        help="display debug output"
+    ),
+
+    # Config file location
+    make_option('-c', '--config',
+        dest='rcfile',
+        default=_rc_path(),
+        help="specify location of config file to use"
     )
 
 
@@ -164,6 +206,12 @@ env_options = [
     
 ]
 
+
+#
+# Environment dictionary - actual dictionary object
+#
+
+
 # Global environment dict. Currently a catchall for everything: config settings
 # such as global deep/broad mode, host lists, username etc.
 # Most default values are specified in `env_options` above, in the interests of
@@ -171,11 +219,9 @@ env_options = [
 env = _AttributeDict({
     # Version number for --version
     'version': get_version(),
-    # Filename of Fab settings file
-    'settings_file': '.fabricrc',
     'sudo_prompt': 'sudo password:',
-    'quiet': False,
-    'use_shell': True
+    'use_shell': True,
+    'roledefs': {}
 })
 
 # Add in option defaults
@@ -200,9 +246,44 @@ connections = HostConnectionCache()
 
 
 #
-# Role dict
+# Output controls
 #
 
-# Keys are simple string names, e.g. 'webservers', values are lists of host
-# strings.
-roles = {}
+# Uses _AttributeDict for ease of use; keys are "levels" or "groups" of output,
+# values are always boolean, determining whether output falling into the given
+# group is printed or not printed.
+#
+# By default, everything except 'debug' is printed, as this is what the average
+# user, and new users, are most likely to expect.
+output = _AttributeDict({
+    # Status messages, i.e. noting when Fabric is done running, if the user
+    # used a keyboard interrupt, or when servers are disconnected from.
+    # These are almost always of interest to CLI users regardless.
+    'status': True,
+    # Abort messages. Like status messages, these should really only be turned
+    # off when using Fabric as a library, and possibly not even then.
+    'aborts': True,
+    # Warning messages. These should usually stay on but are often useful to
+    # disable when e.g. using empty "grep" output to determine some sort of
+    # status.
+    'warnings': True,
+    # Printouts of commands being executed or files transferred, i.e.
+    # "[myserver] run: ls /var/www". This group and "stdout"/"stderr" are
+    # typically set to the same value, but may be toggled if the need arises.
+    'running': True,
+    # Local, or remote, stdout, i.e. non-error output from commands.
+    'stdout': True,
+    # Local, or remote, stderr, i.e. error-related output from commands.
+    'stderr': True,
+    # Turn on debugging. Typically off; used to see e.g. the "full" commands
+    # being run (i.e. env.shell + command => '/bin/bash -l -c "ls /var/www"',
+    # as well as various other debuggy-type things. May add additional output,
+    # or modify pre-existing output.
+    #
+    # Where modifying other pieces of output (such as above example where it
+    # modifies the 'running' line to show the shell and any escape characters),
+    # this setting takes precedence over the other; so if "running" is False
+    # but "debug" is True, you will still be shown the 'what is running' line
+    # in its debugging form.
+    'debug': False
+})

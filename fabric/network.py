@@ -79,6 +79,24 @@ def normalize(host_string, omit_port=False):
     return user, host, port
 
 
+def denormalize(host_string):
+    """
+    Strips out default values for the given host string.
+
+    If the user part is the default user, it is removed; if the port is port 22,
+    it also is removed.
+    """
+    from state import env
+    r = host_regex.match(host_string).groupdict()
+    user = ''
+    if r['user'] != env.user:
+        user = r['user'] + '@'
+    port = ''
+    if r['port'] != '22':
+        port = ':' + r['port']
+    return user + r['host'] + port
+
+
 def join_host_strings(user, host, port=None):
     """
     Turns user/host/port strings into ``user@host:port`` combined string.
@@ -107,11 +125,14 @@ def connect(user, host, port):
 
     # Init client
     client = ssh.SSHClient()
-    # Load known host keys (e.g. ~/.ssh/known_hosts)
-    client.load_system_host_keys()
+
+    # Load known host keys (e.g. ~/.ssh/known_hosts) unless user says not to.
+    if not env.disable_known_hosts:
+        client.load_system_host_keys()
     # Unless user specified not to, accept/add new, unknown host keys
-    if not env.reject_unknown_keys:
+    if not env.reject_unknown_hosts:
         client.set_missing_host_key_policy(ssh.AutoAddPolicy())
+
 
     #
     # Connection attempt loop
@@ -130,7 +151,7 @@ def connect(user, host, port):
             connected = True
             return client
         # Prompt for new password to try on auth failure
-        except (ssh.AuthenticationException, ssh.SSHException):
+        except ssh.AuthenticationException:
             # TODO: tie this into global prompting (i.e. right now both uses of
             # prompt_for_password() do the same "if not env.password" stuff.
             # may want to roll that into prompt_for_password() itself?
@@ -138,6 +159,9 @@ def connect(user, host, port):
             # Update env.password if it was empty
             if not env.password:
                 env.password = password
+        # Handle any other kind of Paramiko-level exception
+        except ssh.SSHException, e:
+            abort(str(e))
         # Ctrl-D / Ctrl-C for exit
         except (EOFError, TypeError):
             # Print a newline (in case user was sitting at prompt)
@@ -222,7 +246,7 @@ def output_thread(prefix, chan, stderr=False, capture=None):
     input from the given channel object ``chan``. ``stderr`` determines whether
     the channel's stdout or stderr is the focus of this particular thread.
     """
-    from state import env
+    from state import env, output
 
     def outputter(prefix, chan, stderr, capture):
         # Read one "packet" at a time, which lets us get less-than-a-line
@@ -258,10 +282,13 @@ def output_thread(prefix, chan, stderr=False, capture=None):
                 line = leftovers + parts.pop(0)
                 leftovers = parts.pop()
                 while parts or line:
-                    # TODO: tie in with global output controls
-                    if not env.quiet:
-                        sys.stdout.write("%s: %s\n" % (prefix, line)),
-                        sys.stdout.flush()
+                    # Write stderr to our own stderr.
+                    out_stream = stderr and sys.stderr or sys.stdout
+                    # But only write at all if we're supposed to.
+                    if ((not stderr and output.stdout)
+                        or (stderr and output.stderr)):
+                        out_stream.write("%s: %s\n" % (prefix, line)),
+                        out_stream.flush()
                     if parts:
                         line = parts.pop(0)
                     else:
@@ -301,6 +328,4 @@ def needs_host(func):
         while not env.get('host_string', False):
             env.host_string = raw_input("No hosts found. Please specify (single) host string for connection: ")
         return func(*args, **kwargs)
-    # Include wrapped func for later introspection
-    host_prompting_wrapper.wrapped = func
     return host_prompting_wrapper
