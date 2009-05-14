@@ -3,45 +3,8 @@ Convenience decorators for use in fabfiles.
 """
 
 from functools import wraps
-from fabric.state import env
+from fabric.state import env,output
 from fabric.utils import abort,indent,warn,args2str
-
-def fabricop (fn):
-    """
-    Decorator defining a fabric operation to be used in fabfiles.
-
-    For example, the following will ensure that, when my_fabricop
-    is called without my_var under a warnings_only() scope, 
-    the execution is not terminated and is simply logged as a 
-    warning::
-    
-        @fabricop
-        def my_fabricop(**kwargs):
-            if 'my_var' not in kwargs.keys():
-                raise AttributeError("my_var not defined")
-            
-        with warnings_only():
-            my_fabricop()
-
-    """
-    func = env.abort_on_failure and abort or warn
-    def function_handler(*args,**kwargs):
-        try:
-            if not env.quiet:
-                print("[%s] %s: %s" % \
-                      (env.host_string, fn.__name__, args2str(*args,**kwargs)))
-            return fn(*args,**kwargs)
-        except Exception,e:
-            if hasattr(e, 'strerror'):
-                underlying_msg = e.strerror
-            else:
-                underlying_msg = e
-            func("%s %s\n\nUnderlying exception message:\n%s" % (
-                  fn.__name__,
-                  args2str(*args,**kwargs),
-                  indent(underlying_msg)
-                ))
-    return function_handler
 
 def hosts(*host_list):
     """
@@ -114,3 +77,47 @@ def runs_once(func):
             decorated.has_run = True
             return func(*args, **kwargs)
     return decorated
+
+
+def fabricop(func):
+    """
+    Decorator defining a fabric operation to be used in fabfiles.
+
+    For example, the following will ensure that, when ``my_fabricop`` is called 
+    without ``my_var`` under a :func:`warnings_only<fabric.context_managers.warnings_only>`
+    scope, the execution is not terminated and is simply logged as a warning::
+    
+        @fabricop
+        def my_fabricop(**kwargs):
+            if 'my_var' not in kwargs.keys():
+                raise AttributeError("my_var not defined")
+        with warnings_only():
+            my_fabricop()
+
+    .. note::
+        This is a convenience decorator for people writing internal operations
+        or :mod:`contrib<fabric.contrib>` libraries for fabric. It is meant to 
+        ensure that all fabric operations that users will apply in their fabfiles 
+        behave consistently.
+    """
+    err_func = env.warn_only and warn or abort
+    @wraps(func)
+    def function_handler(*args,**kwargs):
+        try:
+            if output.running:
+                print("[%s] %s: %s" % \
+                      (env.host_string, func.__name__, args2str(*args,**kwargs)))
+            return func(*args,**kwargs)
+        except Exception,e:
+            if hasattr(e, 'strerror'):
+                underlying_msg = e.strerror
+            else:
+                underlying_msg = e
+            err_func("%s %s\n\nUnderlying exception message:\n%s" % (
+                  func.__name__,
+                  args2str(*args,**kwargs),
+                  indent(underlying_msg)
+                ))
+        
+    function_handler.wrapped = func
+    return function_handler
