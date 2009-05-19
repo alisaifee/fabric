@@ -11,7 +11,7 @@ import re
 import stat
 import subprocess
 
-from context_managers import setenv
+from context_managers import settings
 from contextlib import closing
 from network import output_thread, needs_host
 from state import env, connections, output
@@ -251,7 +251,7 @@ def put(local_path, remote_path, mode=None):
     ftp = connections[env.host_string].open_sftp()
     with closing(ftp) as ftp:
         remote_path = remote_path.replace('~', ftp.normalize('.'))
-   
+
         try:
             rmode = ftp.lstat(remote_path).st_mode
         except:
