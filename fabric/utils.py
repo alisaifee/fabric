@@ -6,7 +6,7 @@ or performing indenting on multiline output.
 import os
 import sys
 import textwrap
-
+from string import Template
 
 def abort(msg):
     """
@@ -65,3 +65,17 @@ def args2str(*args,**kwargs):
     l,d=_listtostr(args),_dicttostr(kwargs)
     
     return l+","+d if (d and l) else d or l
+
+def eval_str_template ( s , lookups = [env]):
+    """
+    return a string evaluated from one that that is in template style, 
+    with the keywords defined in the dictionaries listed in `lookups`.
+    
+    Example::
+        reduced = eval_str_template("${user} is the user", \
+                                    lookups = [{"user":"fabuser"}])
+        
+    """ 
+    _dict = {}
+    [_dict.update(k) for k in lookups]
+    return Template(s).safe_substitute( _dict )
