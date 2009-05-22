@@ -16,7 +16,7 @@ from fabric.decorators import fabricop
 from fabric.network import needs_host
 from fabric.state import env, connections,win32
 from fabric.operations import get, put
-from fabric.context_managers import setenv,hide
+from fabric.context_managers import hide
 from contextlib import closing
 import os
 from stat import S_ISREG,S_ISDIR,S_ISLNK
