@@ -67,7 +67,10 @@ def args2str(*args,**kwargs):
     
     return l+","+d if (d and l) else d or l
 
-def eval_str_template ( s , lookups = [env]):
+
+
+
+def eval_str_template ( s, lookups = []):
     """
     return a string evaluated from one that that is in template style, 
     with the keywords defined in the dictionaries listed in `lookups`.
@@ -75,9 +78,21 @@ def eval_str_template ( s , lookups = [env]):
     Example::
         reduced = eval_str_template("${user} is the user", \
                                     lookups = [{"user":"fabuser"}])
+    .. note::
+        the function defaults to `state.env` as the lookup dictionary,
+        however `lookup` can be a list of dictionaries which will all 
+        be used for the template resolution (if multiple
+        dictionaries are passed in - there is no guarantee towards which
+        key will be used in the substitution if multiple dictionaries
+        contain the same key).
         
     """ 
-    _dict = {}
-    [_dict.update(k) for k in lookups]
-    return Template(s).safe_substitute( _dict )
-    
+    def eval_str_template_sub( s, lookups = [] ):
+        _dict = {}
+        [_dict.update(k) for k in lookups]
+        return Template(s).safe_substitute( _dict ) if _dict else s
+
+    from state import env
+    return eval_str_template_sub( s, lookups = [env] if not lookups \
+                                  else lookups )
+
