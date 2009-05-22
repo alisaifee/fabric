@@ -7,7 +7,7 @@ import os
 import sys
 import textwrap
 from string import Template
-
+from itertools import chain
 
 def abort(msg):
     """
@@ -59,14 +59,20 @@ def indent(text, spaces=4, strip=False):
     return output
 
 def args2str(*args,**kwargs):
-    _listtostr = lambda args:",".join(["'%s'"%k for k in args]) if args else None
-    _dicttostr = lambda kwargs:",".join(["%s='%s'"%(k,kwargs[k]) for k in kwargs]) \
-                 if kwargs else None
-    str = ""
-    l,d=_listtostr(args),_dicttostr(kwargs)
+    """
+    pretty printer for function argument spec.
     
-    return l+","+d if (d and l) else d or l
+    e.g. if *args = 1, 2 & **kwargs = a=1, the return will be a string:
+    '1,2,"a"=1'
+    """
+    
+    def repr_(x):
+        if not hasattr(x,'__iter__'):
+            return repr(x)
+        else :
+            return "%s=%s" % tuple(map(repr,x))
 
+    return "%s" % ", ".join(map(repr_, chain(args, kwargs.iteritems())))
 
 
 
