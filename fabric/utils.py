@@ -60,10 +60,10 @@ def indent(text, spaces=4, strip=False):
 
 def args2str(*args,**kwargs):
     """
-    pretty printer for function argument spec.
+    pretty printer to be used for a functions arguments spec. Usage::
     
-    e.g. if *args = 1, 2 & **kwargs = a=1, the return will be a string:
-    '1,2,"a"=1'
+        args2str(1, 2 , a=1) == '1, 2, "a"=1)
+    
     """
     
     def repr_(x):
@@ -79,11 +79,14 @@ def args2str(*args,**kwargs):
 def eval_str_template ( s, lookups = []):
     """
     return a string evaluated from one that that is in template style, 
-    with the keywords defined in the dictionaries listed in `lookups`.
-    
-    Example::
-        reduced = eval_str_template("${user} is the user", \
-                                    lookups = [{"user":"fabuser"}])
+    with the keywords defined in the dictionaries listed in `lookups`. For example::
+
+        _str = "${user} is the current user"
+        _dict = {"user":"fabuser"}
+        reduced = eval_str_template(
+                                    _str,
+                                    lookups = [_dict]
+                                    )
     .. note::
         the function defaults to `state.env` as the lookup dictionary,
         however `lookup` can be a list of dictionaries which will all 
