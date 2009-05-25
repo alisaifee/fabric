@@ -58,10 +58,11 @@ class _AttributeDict(dict):
 
     """
     def __getattr__(self, key):
-        if key in self:
+        try:
             return self[key]
-        else:
-            raise AttributeError # to conform with __getattr__ spec
+        except KeyError:
+            # to conform with __getattr__ spec
+            raise AttributeError(key)
 
     def __setattr__(self, key, value):
         self[key] = value
@@ -182,26 +183,22 @@ env_options = [
         help="specify a new shell, defaults to '/bin/bash -l -c'"
     ),
 
-    # Debug output
-    # TODO: tie into global output controls better (this is just a stopgap)
-    make_option('--debug',
-        action='store_true',
-        default=False,
-        help="display debug output"
-    ),
-
     # Config file location
     make_option('-c', '--config',
         dest='rcfile',
         default=_rc_path(),
         help="specify location of config file to use"
+    ),
+
+    # Verbosity controls, analogous to context_managers.(hide|show)
+    make_option('--hide',
+        metavar='LEVELS',
+        help="comma-separated list of output levels to hide"
+    ),
+    make_option('--show',
+        metavar='LEVELS',
+        help="comma-separated list of output levels to show"
     )
-
-
-    # TODO: verbosity selection (sets state var(s) used when printing)
-    # Could default to typical -v/--verbose disabling fab_quiet; or could do
-    # multiple levels, e.g. -vvv, OR could specifically enable/disable stuff,
-    # e.g. --no-warnings / --no-echo (no echoing commands) / --no-stdout / etc.
     
 ]
 
@@ -310,36 +307,15 @@ class _AliasDict(_AttributeDict):
 #
 # By default, everything except 'debug' is printed, as this is what the average
 # user, and new users, are most likely to expect.
+#
+# See docs/usage.rst for details on what these levels mean.
 output = _AliasDict({
-    # Status messages, i.e. noting when Fabric is done running, if the user
-    # used a keyboard interrupt, or when servers are disconnected from.
-    # These are almost always of interest to CLI users regardless.
     'status': True,
-    # Abort messages. Like status messages, these should really only be turned
-    # off when using Fabric as a library, and possibly not even then.
     'aborts': True,
-    # Warning messages. These should usually stay on but are often useful to
-    # disable when e.g. using empty "grep" output to determine some sort of
-    # status.
     'warnings': True,
-    # Printouts of commands being executed or files transferred, i.e.
-    # "[myserver] run: ls /var/www". This group and "stdout"/"stderr" are
-    # typically set to the same value, but may be toggled if the need arises.
     'running': True,
-    # Local, or remote, stdout, i.e. non-error output from commands.
     'stdout': True,
-    # Local, or remote, stderr, i.e. error-related output from commands.
     'stderr': True,
-    # Turn on debugging. Typically off; used to see e.g. the "full" commands
-    # being run (i.e. env.shell + command => '/bin/bash -l -c "ls /var/www"',
-    # as well as various other debuggy-type things. May add additional output,
-    # or modify pre-existing output.
-    #
-    # Where modifying other pieces of output (such as above example where it
-    # modifies the 'running' line to show the shell and any escape characters),
-    # this setting takes precedence over the other; so if "running" is False
-    # but "debug" is True, you will still be shown the 'what is running' line
-    # in its debugging form.
     'debug': False
 
 }, aliases={
