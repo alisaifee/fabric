@@ -71,7 +71,7 @@ def args2str(*args,**kwargs):
             return repr(x)
         else :
             return "%s=%s" % tuple(map(repr,x))
-
+    
     return "%s" % ", ".join(map(repr_, chain(args, kwargs.iteritems())))
 
 
@@ -87,6 +87,7 @@ def eval_str_template ( s, lookups = []):
                                     _str,
                                     lookups = [_dict]
                                     )
+                                    
     .. note::
         the function defaults to `state.env` as the lookup dictionary,
         however `lookup` can be a list of dictionaries which will all 
