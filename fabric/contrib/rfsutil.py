@@ -3,11 +3,11 @@ Module for providing shutil / os type methods that work on remote systems.
 
 All the operations provided in this namespace are decorated by the 
 :func:`fabricop<fabric.decorators.fabricop>` & :func:`needs_host<fabric.network.needs_host>` 
-decorators - therefore,
-
+decorators - therefore:
     1. It is compulsory to provide a host before calling any function.
     2. Each function will respond to environment settings such as `quiet`, 
             `debug` and contextmanagers such as `warnings_only`.
+
 
 """
 
@@ -15,7 +15,7 @@ from __future__ import with_statement
 from fabric.decorators import fabricop
 from fabric.network import needs_host
 from fabric.state import env, connections,win32
-from fabric.operations import get, put
+from fabric.operations import get, put, run
 from fabric.context_managers import hide
 from contextlib import closing
 import os
@@ -61,7 +61,10 @@ def _unixpath(path):
     For win32 systems only - ensures forward slashes after performing
     `os.path` operations (which by default return back-slashes.
     """
-    return path.replace("\\", "/") if win32 else path
+    
+    _drive_less = os.path.splitdrive( path )[1]
+    _forward_slashed  = _drive_less .replace ( "\\", "/" )
+    return _forward_slashed if win32 else path
 
 def _r_normalizepath(path):
     """
@@ -69,12 +72,16 @@ def _r_normalizepath(path):
     """
     return path.replace('~', r_getcwd() )
 
-def _remote_copy_tree (src , dst, ignore , is_src_local):
+def _remote_copy_tree (src , dst, ignore , is_src_local , is_dst_local ):
     """
     Private method to perform a copytree operation 
     
     The implementation of this method is moreover a rip-off of shutils::
     copytree method.
+    
+    ..note::
+        `src_dst_mode` can take the values 0,1,2 where 0: dst is local, 1:
+        src is local, and 2 both src & dst are remote.
     
     """
     with hide('running'):
@@ -84,23 +91,26 @@ def _remote_copy_tree (src , dst, ignore , is_src_local):
             ignored_names = ignore(src, names)
         else:
             ignored_names = set()
-        if is_src_local:
-            r_makedirs(dst)
+        if not is_dst_local:
+            r_makedirs(_unixpath ( dst) )
         else:
             os.makedirs(_unixpath(dst) )
         errors = []
         for name in names:
             if name in ignored_names:
                 continue
-            srcname = _unixpath(os.path.join(src, name)) 
-            dstname = _unixpath(os.path.join(dst, name))
+            srcname = os.path.join(src, name) 
+            dstname = os.path.join(dst, name)
             try:
                 if (os.path.isdir(srcname) if is_src_local \
                         else r_isdir(_unixpath(srcname))):
-                    _remote_copy_tree(srcname, dstname, ignore, is_src_local)
+                    _remote_copy_tree(srcname, dstname, ignore, is_src_local,is_dst_local)
                 else:
-                    put(srcname, _unixpath(dstname)) if is_src_local \
-                        else get(srcname, _unixpath(dstname))
+                    if not is_src_local and not is_dst_local:
+                        r_copy2(srcname, dstname)
+                    else:
+                        put(srcname, _unixpath(dstname)) if is_src_local \
+                            else get(srcname, _unixpath(dstname))
                 # XXX What about devices, sockets etc.?
             except (IOError, os.error), why:
                 errors.append((srcname, dstname, str(why)))
@@ -110,6 +120,21 @@ def _remote_copy_tree (src , dst, ignore , is_src_local):
                 errors.extend(err.args[0])
         if errors:
             raise Exception, errors 
+
+def allow_patterns(*patterns):
+    """Function that can be used as a reverse copytree() ignore parameter.
+
+ 
+    Patterns is a sequence of glob-style patterns
+    that are used to include files""" 
+    def _ignore_patterns(path, names):
+        print names
+        ignored_names = []
+        for pattern in patterns:
+            ignored_names.extend([k for k in names if k not in shutil.fnmatch.filter(names, pattern)])
+        print ignored_names
+        return set(ignored_names)
+    return _ignore_patterns
 
 @needs_host
 @fabricop
@@ -121,8 +146,8 @@ def r_rmtree(path, ignore_errors=False, onerror=None):
     is set, it is called to handle the error with arguments (func,
     path, exc_info) where func is :func:`r_listdir`, :func:`r_remove`,
     or :func:`r_rmdir`; path is the argument to that function that caused 
-    it to fail; and exc_info is a tuple returned by `sys.exc_info()`.  If 
-    ignore_errors is false and onerror is None, an exception is raised.
+    it to fail; and `exc_info` is a tuple returned by `sys.exc_info()`.  If 
+    ignore_errors is false and `onerror` is None, an exception is raised.
 
     """
     with hide('running'):
@@ -200,14 +225,14 @@ def r_open(name, mode='r', buffering=False):
     
     Treat it as you would treat a file object returned by `open` for instance::
     
-        file = r_open ( "~/blah.txt","r")
-        if file:
-            contents = file.read()
-        file.close()
+        infile = r_open ( "~/input.txt","r")
+        if infile:
+            contents = infile.read()
+            infile.close()
         
         with warnings_only():
-            file = r_open("~/nonexistentfile.txt","w")
-            file.write("this can't happen")
+            outfile = r_open("~/output.txt","w")
+            outfile.write("output text")
     
     """
     con = connections[env.host_string].open_sftp()
@@ -224,7 +249,7 @@ def put_copytree (src, dst , ignore=None):
     
     """
     
-    return _remote_copy_tree (src, _r_normalizepath(dst), ignore, True)
+    return _remote_copy_tree (src, _r_normalizepath(dst), ignore, True, False)
 
 @needs_host
 @fabricop
@@ -237,7 +262,12 @@ def get_copytree (src, dst , ignore=None):
     
     """
 
-    return _remote_copy_tree (_r_normalizepath(src), dst, ignore, False)
+    return _remote_copy_tree (_r_normalizepath(src), dst, ignore, False, True)
+
+@needs_host
+@fabricop
+def r_copytree ( src, dst, ignore=None):
+    return _remote_copy_tree(_r_normalizepath(src), _r_normalizepath(dst) , ignore, False, False)
 
 @needs_host
 @fabricop
@@ -245,7 +275,8 @@ def r_rmdir(path):
     """
     Remove a remote directory.
     
-    .. note:: This is not a recursive method. For that, use :func:`r_rmtree`
+    .. note::
+        This is not a recursive method. For that, use :func:`r_rmtree`
     """
     with closing(connections[env.host_string].open_sftp()) as ftp:
         return ftp.rmdir(_r_normalizepath( path ) )
@@ -256,8 +287,10 @@ def r_stat (path):
     """
     State a path on the remote host.
     
-    ... note: the tuple returned by this method should be inspected with 
-    the python standard libaray ``stat`` module.
+    The tuple returned by this method should be inspected the same
+    way as that returned by the python standard libaray ``os.stat``
+    method.
+        
     """
     with closing(connections[env.host_string].open_sftp()) as ftp:
         return ftp.stat(_r_normalizepath( path ) )
@@ -308,8 +341,9 @@ def r_mkdir (path , mode=0777):
     Create a directory given by *path* with the mode specified by *mode*.
     Returns False on error.
     
-    ..note::This is not a recursive method. If that is what you need,
-    use :func:`makedirs`.
+    .. note::
+        This is not a recursive method. If that is what you need,
+        use :func:`r_makedirs`.
     """
     with closing(connections[env.host_string].open_sftp()) as ftp:
         try:
@@ -336,7 +370,7 @@ def r_listdir(path):
     are not included
     """
     with closing(connections[env.host_string].open_sftp()) as ftp:
-        return ftp.listdir(_r_normalizepath( path )) 
+        return ftp.listdir(_unixpath ( _r_normalizepath( path ) )) 
 
 @needs_host
 @fabricop
@@ -369,4 +403,37 @@ def r_getcwd():
     """
     with closing(connections[env.host_string].open_sftp()) as ftp:
         return ftp.normalize('.')
+
+
+@needs_host
+@fabricop
+def r_copy2(src,dst):
+    """
+    Essentially does the same thing as r_copy except it uses the shell 'cp' command.
+    """
+    try:
+        run ( 'cp "%s" "%s"' % (src,dst))
+    except Exception,e:
+        raise
+@needs_host
+@fabricop
+def r_copy(src,dst):
+    """
+    Copy file obeject *src* to *dst*. 
+    
+    .. note::
+        This actually opens up a filehandle for both *src* and *dst* and copies 
+        byte by byte.
+    """
+    fsrc = None
+    fdst = None
+    try:
+        fsrc = r_open(src, 'rb')
+        fdst = r_open(dst, 'wb')
+        shutil.copyfileobj(fsrc, fdst)
+    finally:
+        if fdst:
+            fdst.close()
+        if fsrc:
+            fsrc.close()
 
