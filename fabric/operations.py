@@ -129,13 +129,20 @@ def prompt(text, key=None, default='', validate=None):
     """
     Prompt user with ``text`` and return the input (like ``raw_input``).
 
-    If ``key`` is given, the user's input will also be stored as ``env.<key>``
-    in addition to being returned by `prompt`. If the key already existed in
+    A single space character will be appended for convenience, but nothing
+    else. Thus, you may want to end your prompt text with a question mark or a
+    colon, e.g. ``prompt("What hostname?")``.
+
+    If ``key`` is given, the user's input will be stored as ``env.<key>`` in
+    addition to being returned by `prompt`. If the key already existed in
     ``env``, its value will be overwritten and a warning printed to the user.
 
     If ``default`` is given, it is displayed in square brackets and used if the
     user enters nothing (i.e. presses Enter without entering any text).
-    ``default`` defaults to the empty string.
+    ``default`` defaults to the empty string. If non-empty, a space will be
+    appended, so that a call such as ``prompt("What hostname?",
+    default="foo")`` would result in a prompt of ``What hostname? [foo]`` (with
+    a trailing space after the ``[foo]``.)
 
     The optional keyword argument ``validate`` may be a callable or a string:
     
@@ -174,6 +181,8 @@ def prompt(text, key=None, default='', validate=None):
     default_str = ""
     if default != '':
         default_str = " [%s] " % str(default).strip()
+    else:
+        default_str = " "
     # Construct full prompt string
     prompt_str = text.strip() + default_str
     # Loop until we pass validation
@@ -349,9 +358,18 @@ def run(command, shell=True):
         output = run('ls /var/www/site1')
     
     """
+    # Set up new var so original argument can be displayed verbatim later.
     real_command = command
     if shell:
-        real_command = '%s "%s"' % (env.shell, _shell_escape(command))
+        # Handle cwd munging via 'cd' context manager
+        cwd = env.get('cwd', '')
+        if cwd:
+            # TODO: see if there is any nice way to quote this, given that it
+            # ends up inside double quotes down below...
+            cwd = 'cd %s && ' % _shell_escape(cwd)
+        # Construct final real, full command
+        real_command = '%s "%s"' % (env.shell,
+            _shell_escape(cwd + real_command))
     # TODO: possibly put back in previously undocumented 'confirm_proceed'
     # functionality, i.e. users may set an option to be prompted before each
     # execution. Pretty sure this should be a global option applying to ALL
@@ -442,8 +460,14 @@ def sudo(command, shell=True, user=None, pty=False):
         real_command = "%s %s" % (sudo_prefix, _shell_escape(command))
     # With a shell, we do 'sudo -u blah /bin/bash -l -c "my_command"'
     else:
+        # With a shell, we can also honor cwd
+        cwd = env.get('cwd', '')
+        if cwd:
+            # TODO: see if there is any nice way to quote this, given that it
+            # ends up inside double quotes down below...
+            cwd = 'cd %s && ' % _shell_escape(cwd)
         real_command = '%s %s "%s"' % (sudo_prefix, env.shell,
-           _shell_escape(command))
+            _shell_escape(cwd + command))
     # TODO: handle confirm_proceed behavior, as in run()
     if output.debug:
         print("[%s] sudo: %s" % (env.host_string, real_command))

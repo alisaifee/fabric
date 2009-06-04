@@ -55,7 +55,9 @@ def upload_template(filename, destination, context=None, use_sudo=False):
     dictionary ``context`` (if given.)
     
     The resulting rendered file will be uploaded to the remote file path
-    ``destination`` (which should include the desired remote filename.)
+    ``destination`` (which should include the desired remote filename.) If the
+    destination file already exists, it will be renamed with a ``.bak``
+    extension.
 
     By default, the file will be copied to ``destination`` as the logged-in
     user; specify ``use_sudo=True`` to use `sudo` instead.
@@ -69,14 +71,16 @@ def upload_template(filename, destination, context=None, use_sudo=False):
         output.flush()
         put(output.name, "/tmp/" + filename)
     func = use_sudo and sudo or run
-    # Crappy sanity check pending a real os.path.join type function that honors
-    # the remote system's join character.
-    if not destination.endswith('/'):
-        destination += '/'
-    destination = destination + filename
-    # Back up any original file
-    if exists(destination):
-        func("cp %s %s.bak" % (destination, destination))
+    # Back up any original file (need to do figure out ultimate destination)
+    to_backup = destination
+    with settings(hide('everything'), warn_only=True):
+        # Is destination a directory?
+        if func('test -f %s' % to_backup).failed:
+            # If so, tack on the filename to get "real" destination
+            # TODO: platform-specific path join
+            to_backup = destination + '/' + filename
+    if exists(to_backup):
+        func("cp %s %s.bak" % (to_backup, to_backup))
     # Actually move uploaded template to destination
     func("mv /tmp/%s %s" % (filename, destination))
 
@@ -201,15 +205,19 @@ def contains(text, filename, exact=False, use_sudo=False):
     func = use_sudo and sudo or run
     if exact:
         text = "^%s$" % text
-    return func('egrep "%s" "%s"' % (
-        text.replace('"', r'\"'),
-        filename.replace('"', r'\"')
-    ))
+    with settings(hide('everything'), warn_only=True):
+        return func('egrep "%s" "%s"' % (
+            text.replace('"', r'\"'),
+            filename.replace('"', r'\"')
+        ))
 
 
 def append(text, filename, use_sudo=False):
     """
-    Append ``text`` to ``filename``.
+    Append string (or list of strings) ``text`` to ``filename``.
+
+    When a list is given, each string inside is handled independently (but in
+    the order given.)
 
     If ``text`` is already found as a discrete line in ``filename``, the append
     is not run, and None is returned immediately. Otherwise, the given text is
@@ -222,7 +230,11 @@ def append(text, filename, use_sudo=False):
     If ``use_sudo`` is True, will use `sudo` instead of `run`.
     """
     func = use_sudo and sudo or run
-    with settings(warn_only=True):
-        if contains('^' + re.escape(text), filename, use_sudo=use_sudo):
-            return None
-    return func("echo '%s' >> %s" % (text.replace("'", r'\''), filename))
+    # Normalize non-list input to be a list
+    if isinstance(text, str):
+        text = [text]
+    for line in text:
+        if (contains('^' + re.escape(line), filename, use_sudo=use_sudo)
+            and line):
+            continue
+        func("echo '%s' >> %s" % (line.replace("'", r'\''), filename))
