@@ -144,7 +144,7 @@ def ignore_patterns(*patterns):
     def _ignore_patterns(path, names):
         ignored_names = []
         for pattern in patterns:
-            ignored_names.extend(fnmatch.filter(names, pattern))
+            ignored_names.extend(shutil.fnmatch.filter(names, pattern))
         return set(ignored_names)
     return _ignore_patterns
 
