@@ -94,12 +94,7 @@ def _rc_path():
     if not win32:
         return os.path.expanduser("~/" + rc_file)
     else:
-        from win32com.shell.shell import SHGetSpecialFolderPath
-        from win32com.shell.shellcon import CSIDL_PROFILE
-        return "%s/%s" % (
-            SHGetSpecialFolderPath(0,CSIDL_PROFILE),
-            rc_file
-        )
+        return "%s/%s" % (os.environ['USERPROFILE'], rc_file)
 
 
 # Options/settings which exist both as environment keys and which can be set
