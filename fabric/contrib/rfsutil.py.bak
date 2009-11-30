@@ -17,7 +17,6 @@ from contextlib import closing
 import os
 from stat import S_ISREG,S_ISDIR,S_ISLNK
 import stat, shutil, sys
-import ntpath
 
 class _RemoteFile:
     """
@@ -59,9 +58,9 @@ def _unixpath(path):
     `os.path` operations (which by default return back-slashes.
     """
     
-    _drive_less = ntpath.splitdrive( path )[1]
+    _drive_less = os.path.splitdrive( path )[1]
     _forward_slashed  = _drive_less .replace ( "\\", "/" )
-    return _forward_slashed if win32 else _drive_less
+    return _forward_slashed if win32 else path
 
 def _r_normalizepath(path):
     """

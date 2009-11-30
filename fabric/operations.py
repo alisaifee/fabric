@@ -49,7 +49,7 @@ def _shell_escape(string):
     """
     Escape double quotes in given ``string``.
     """
-    return string.replace(r'"', r'\"')
+    return string#return string.replace(r'"', r'\"')
 
 
 class _AttributeString(str):
