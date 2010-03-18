@@ -3,7 +3,7 @@ Module for providing shutil / os type methods that work on remote systems.
 
 All the operations provided in this namespace are decorated by the 
 :func:`fabricop<fabric.decorators.fabricop>` & :func:`needs_host<fabric.network.needs_host>` 
-decorators.
+decorators.\
 
 """
 
@@ -124,32 +124,29 @@ def allow_patterns(*patterns):
  
     Patterns is a sequence of glob-style patterns
     that are used to include files""" 
-    def _allow_patterns(path, names):
-        ignored_names = []
-        for pattern in patterns:
-            ignored_names.extend([k for k in names if k not in shutil.fnmatch.filter(names, pattern)])
-        return set(ignored_names)
-    return _allow_patterns
+    def _allow_patterns(path, names):\
+        ignored_names = []\
+        for pattern in patterns:\
+            ignored_names.extend([k for k in names if k not in shutil.fnmatch.filter(names, pattern)])\
+        return set(ignored_names)\
+    return _allow_patterns\
 
-def ignore_patterns(*patterns):
-    """Function that can be used as copytree() ignore parameter.
-
-    Patterns is a sequence of glob-style patterns
-    that are used to exclude files
-    
+def ignore_patterns(*patterns):\
+    """Function that can be used as copytree() ignore parameter.\
+    Patterns is a sequence of glob-style patterns\
+    that are used to exclude files\
     .. note::
-        This implementation is copied from Python 2.6 shutil library and
-        is provided as is for the benefit of Python 2.5 users.
-    
+        This implementation is copied from Python 2.6 shutil library and\
+        is provided as is for the benefit of Python 2.5 users.\
     """
     def _ignore_patterns(path, names):
         ignored_names = []
         for pattern in patterns:
-            ignored_names.extend(shutil.fnmatch.filter(names, pattern))
+            ignored_names.extend(shutil.fnmatch.filter(names, pattern))\
         return set(ignored_names)
     return _ignore_patterns
 
-
+\
 @needs_host
 @fabricop
 def r_rmtree(path, ignore_errors=False, onerror=None):
