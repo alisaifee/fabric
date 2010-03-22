@@ -2,6 +2,7 @@ from __future__ import with_statement
 
 from datetime import datetime
 import getpass
+import sys
 
 import paramiko
 from nose.tools import eq_, with_setup
@@ -9,9 +10,11 @@ from fudge import Fake, clear_calls, clear_expectations, patch_object, verify, \
     with_patched_object, patched_context
 
 from fabric.network import (HostConnectionCache, join_host_strings, normalize,
-    prompt_for_password, denormalize)
+    denormalize, output_thread)
 import fabric.network # So I can call patch_object correctly. Sigh.
-from fabric.state import env, _get_system_username
+from fabric.state import env, _get_system_username, output as state_output
+
+from utils import mock_streams
 
 
 #
@@ -20,7 +23,7 @@ from fabric.state import env, _get_system_username
 
 def test_host_string_normalization():
     username = _get_system_username()
-    for description, string1, string2 in (
+    for description, input, output in (
         ("Sanity check: equal strings remain equal",
             'localhost', 'localhost'),
         ("Empty username is same as get_system_username",
@@ -31,7 +34,7 @@ def test_host_string_normalization():
             'localhost', username + '@localhost:22'),
     ):
         eq_.description = "Host-string normalization: %s" % description
-        yield eq_, normalize(string1), normalize(string2) 
+        yield eq_, normalize(input), normalize(output)
         del eq_.description
 
 def test_normalization_without_port():
@@ -51,6 +54,18 @@ def test_nonword_character_in_username():
         normalize('user-with-hyphens@someserver.org')[0],
         'user-with-hyphens'
     )
+
+def test_normalization_of_empty_input():
+    empties = ('', '', '')
+    for description, input in (
+        ("empty string", ''),
+        ("None", None)
+    ):
+        eq_.description = "normalize() returns empty strings for %s input" % (
+            description
+        )
+        yield eq_, normalize(input), empties
+        del eq_.description
 
 def test_host_string_denormalization():
     username = _get_system_username()
@@ -155,41 +170,65 @@ def test_prompts_for_password_without_good_authentication():
                 clear_expectations()
 
 
-#
-# Password prompting
-#
-
-password = 'password'
-getpass_nonempty = Fake('getpass', callable=True).returns(password)
-getpass_empty = Fake('getpass', callable=True).returns('')
-
-
-@with_patched_object('getpass', 'getpass', getpass_nonempty)
-def test_password_prompt_respects_env_sudo_prompt():
+class FakeChannel(object):
     """
-    prompt_for_password() detects env.sudo_prompt()
+    Does what it says on the tin. Fakes a paramiko.Channel object.
+
+    Currently only fakes what is necessary for the following test and is not a
+    full drop-in replacement.
     """
+    def __init__(self, stdout_text, stderr_text=""):
+        self.stdout = stdout_text
+        self.stderr = stderr_text
+
+    def _recv(self, which, num_bytes):
+        obj = getattr(self, which)
+        chunk = obj[:num_bytes]
+        setattr(self, which, obj[num_bytes:])
+        return chunk
+
+    def recv(self, num_bytes):
+        return self._recv('stdout', num_bytes)
+
+    def recv_stderr(self, num_bytes):
+        return self._recv('stderr', num_bytes)
+
+
+@mock_streams('stdout')
+def test_trailing_newline_line_drop():
+    """
+    Trailing newlines shouldn't cause last line to be dropped.
+    """
+    # Multiline output with trailing newline
+    output_string = """AUTHORS
+FAQ
+Fabric.egg-info
+INSTALL
+LICENSE
+MANIFEST
+README
+build
+docs
+fabfile.py
+fabfile.pyc
+fabric
+requirements.txt
+setup.py
+tests
+"""
+    # Setup for calling output_thread
+    capture = []
+    prefix = "[localhost]"
+    # TODO: fix below two lines, duplicates inner workings of output_thread
+    full_prefix = prefix + ": "
+    expected_output = (full_prefix
+        + ('\n' + full_prefix).join(output_string.splitlines())
+    ) + '\n'
+    # Create, tie off thread
+    thread = output_thread(prefix, FakeChannel(output_string), capture=capture)
+    thread.join()
+    # Test equivalence of expected, received output
     eq_(
-        prompt_for_password(env.sudo_prompt, None),
-        password
-    )
-
-@with_patched_object('getpass', 'getpass', getpass_nonempty)
-def test_password_prompt_ignores_non_prompt_output():
-    """
-    prompt_for_password() ignores output which is not a prompt
-    """
-    eq_(
-        prompt_for_password("blah blah blah this is not a prompt", None),
-        None
-    )
-
-@with_patched_object('getpass', 'getpass', getpass_empty)
-def test_password_prompt_uses_given_password_on_empty_input():
-    """
-    prompt_for_password() uses the supplied password if user hits Enter
-    """
-    eq_(
-        prompt_for_password(env.sudo_prompt, password),
-        password
+        expected_output,
+        sys.stdout.getvalue()
     )

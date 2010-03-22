@@ -9,9 +9,15 @@ import threading
 import socket
 import sys
 
-import paramiko as ssh
+from fabric.utils import abort
 
-from utils import abort
+try:
+    import warnings
+    warnings.simplefilter('ignore', DeprecationWarning)
+    import paramiko as ssh
+except ImportError:
+    abort("paramiko is a required module. Please install it:\n\t$ sudo easy_install paramiko")
+
 
 
 host_pattern = r'((?P<user>[^@]+)@)?(?P<host>[^:]+)(:(?P<port>\d+))?'
@@ -60,6 +66,9 @@ class HostConnectionCache(dict):
         # Return the value either way
         return dict.__getitem__(self, real_key)
 
+    def __delitem__(self, key):
+        return dict.__delitem__(self, join_host_strings(*normalize(key)))
+
 
 def normalize(host_string, omit_port=False):
     """
@@ -67,7 +76,10 @@ def normalize(host_string, omit_port=False):
 
     If ``omit_port`` is given and is True, only the host and user are returned.
     """
-    from state import env
+    from fabric.state import env
+    # Gracefully handle "empty" input by returning empty output
+    if not host_string:
+        return ('', '') if omit_port else ('', '', '')
     # Get user, host and port separately
     r = host_regex.match(host_string).groupdict()
     # Add any necessary defaults in
@@ -150,16 +162,17 @@ def connect(user, host, port):
                 key_filename=env.key_filename, timeout=10)
             connected = True
             return client
+        # BadHostKeyException corresponds to key mismatch, i.e. what on the
+        # command line results in the big banner error about man-in-the-middle
+        # attacks.
+        except ssh.BadHostKeyException:
+            abort("Host key for %s did not match pre-existing key! Server's key was changed recently, or possible man-in-the-middle attack." % env.host)
         # Prompt for new password to try on auth failure
         except (
             ssh.AuthenticationException,
             ssh.PasswordRequiredException,
             ssh.SSHException
         ), e:
-            # TODO: tie this into global prompting (i.e. right now both uses of
-            # prompt_for_password() do the same "if not env.password" stuff.
-            # may want to roll that into prompt_for_password() itself?
-
             # For whatever reason, empty password + no ssh key or agent results
             # in an SSHException instead of an AuthenticationException. Since
             # it's difficult to do otherwise, we must assume empty password +
@@ -179,9 +192,18 @@ def connect(user, host, port):
             # method overrides the password argument to be either the login
             # password OR the private key passphrase. Meh.)
             #
-            # TODO: this block below results in passphrase prompt for some
-            # errors such as when the wrong user was given. See if this can be
-            # fixed.
+            # NOTE: This will come up if you normally use a
+            # passphrase-protected private key with ssh-agent, and enter an
+            # incorrect remote username, because Paramiko:
+            # * Tries the agent first, which will fail as you gave the wrong
+            # username, so obviously any loaded keys aren't gonna work for a
+            # nonexistent remote account;
+            # * Then tries the on-disk key file, which is passphrased;
+            # * Realizes there's no password to try unlocking that key with,
+            # because you didn't enter a password, because you're using
+            # ssh-agent;
+            # * In this condition (trying a key file, password is None)
+            # Paramiko raises PasswordRequiredException.
             text = None
             if e.__class__ is ssh.PasswordRequiredException:
                 # NOTE: we can't easily say WHICH key's passphrase is needed,
@@ -189,7 +211,7 @@ def connect(user, host, port):
                 # env.key_filename may be a list of keys, so we can't know
                 # which one raised the exception. Best not to try.
                 text = "Please enter passphrase for private key"
-            password = prompt_for_password(None, password, text)
+            password = prompt_for_password(password, text)
             # Update env.password if it was empty
             if not env.password:
                 env.password = password
@@ -212,63 +234,48 @@ def connect(user, host, port):
             )
 
 
-def prompt_for_password(output=None, previous_password=None, text=None):
+def prompt_for_password(previous=None, prompt=None):
     """
     Prompts for and returns a new password if required; otherwise, returns None.
 
-    ``output`` should be a string and is typically going to be the current
-    chunk of text obtained from the remote server. It is searched for a couple
-    of potential prompt strings (including the env variable
-    ``env.sudo_prompt``) and, if found, will prompt the user for a password.
+    ``previous`` should be the last known password, and is typically "primed"
+    with ``env.password``, though it may be empty or None if ``env.password``
+    was not set and no password has previously been entered during this
+    session.
 
-    Alternately, ``output`` may be None, implying that the password should
-    always be prompted for, such as in the case of initial SSH connection
-    (where "prompt for a password" is denoted by catching an exception, instead
-    of detecting a prompt.)
+    When non-empty, ``previous`` will be used as a default if the user hits
+    Enter without entering a new password, and the displayed password prompt
+    will reflect this.
 
-    ``previous_password`` should be the last known password, and is typically
-    "primed" with ``env.password``, though it may be empty or None if
-    ``env.password`` was not set and no password has previously been entered
-    during this session.
-
-    When non-empty, ``previous_password`` will be used as a default if the user
-    hits Enter without entering a new password, and the displayed password
-    prompt will reflect this.
-
-    If the user supplies an empty password **and** ``previous_password`` is
-    also empty, the user will be re-prompted immediately. Thus, this function
-    will never return the empty string, avoiding a potential pitfall of having
-    two False-evaluating return values meaning two different things.
+    If the user supplies an empty password **and** ``previous`` is also empty,
+    the user will be re-prompted until they enter a non-empty password.
 
     Finally, ``prompt_for_password`` autogenerates the user prompt based on the
     current host being connected to. To override this, specify a string value
-    for ``text``.
+    for ``prompt``.
     """
-    from state import env
-    # TODO: tie all of this into global/centralized prompt detection
-    # Short-circuit if no password prompt found in output
-    if (output is not None
-        and not re.findall(r'^%s$' % env.sudo_prompt, output, re.I|re.M)):
-        return
+    from fabric.state import env
     # Construct the prompt we will display to the user (using host if available)
     if 'host' in env:
-        base_password_prompt = "Password for %s" % join_host_strings(*normalize(
-            env.host_string, omit_port=True))
+        host = join_host_strings(*normalize(env.host_string, omit_port=True))
+        base_password_prompt = "Password for %s" % host
     else:
         base_password_prompt = "Password"
     password_prompt = base_password_prompt
-    # Handle prompt override
-    if text is not None:
-        password_prompt = text
-    if previous_password:
+    # Handle prompt text override
+    if prompt is not None:
+        password_prompt = prompt
+    # If the caller knew of a previously given password, give the user the
+    # option of trying that again.
+    if previous:
         password_prompt += " [Enter for previous]"
     password_prompt += ": "
     # Get new password value
     new_password = getpass.getpass(password_prompt)
     # See if user wants us to use the previous password and return right away
     # if so.
-    if (not new_password) and previous_password:
-        return previous_password
+    if (not new_password) and previous:
+        return previous
     # Otherwise, loop until user gives us a non-empty password (to prevent
     # returning the empty string, and to avoid unnecessary network overhead.)
     while not new_password:
@@ -298,27 +305,43 @@ def output_thread(prefix, chan, stderr=False, capture=None):
             recv = chan.recv
         out = recv(65535)
         while out != '':
-            # Capture if necessary
+            # Detect password prompts
+            initial = re.findall(r'^%s$' % env.sudo_prompt, out, re.I|re.M)
+            try_again = re.findall(r'^%s' % env.again_prompt, out, re.I|re.M)
+            # Capture if necessary (omitting password prompts so captured
+            # stderr isn't gunked up)
             if capture is not None:
+                if initial:
+                    out = out.replace(env.sudo_prompt, '')
+                if try_again:
+                    out = out.replace(env.again_prompt, '')
                 capture += out
-            # Handle any password prompts (storing in current-session password)
-            password = prompt_for_password(out, password)
-            # prompt_for_password() returns None if no prompt was found; thus
-            # if the password is NOT None, we were prompted and have to inform
-            # the remote server of what the user supplied.
-            if password is not None:
-                # Communicate "upstream" to env if env.password was empty
-                if not env.password:
-                    env.password = password
-                # Send password down the pipe
+            # Deal with password prompts
+            if initial or try_again:
+                # Prompt user if nothing to try, or if stored password failed
+                if not password or try_again:
+                    # Save entered password in local and global password var.
+                    # Will have to re-enter when password changes per host, but
+                    # this way a given password will persist for as long as
+                    # it's valid.
+                    env.password = password = prompt_for_password(password)
+                # Send current password down the pipe
                 chan.sendall(password + '\n')
                 out = ""
             # Deal with line breaks, printing all lines and storing the
             # leftovers, if any.
-            if '\n' in out:
-                parts = out.split('\n')
+            if '\n' in out or '\r' in out:
+                # Break into list of lines/parts
+                parts = out.splitlines()
+                # Deal with edge case of trailing newline (messes up leftovers
+                # logic due to how splitlines() behaves)
+                if out[-1] in ['\n', '\r']:
+                    parts.append('')
+                # Initialize loop with first line
                 line = leftovers + parts.pop(0)
-                leftovers = parts.pop()
+                # Take off the last part, since it may be a partial line
+                if parts:
+                    leftovers = parts.pop()
                 while parts or line:
                     # Write stderr to our own stderr.
                     out_stream = stderr and sys.stderr or sys.stdout
@@ -360,10 +383,47 @@ def needs_host(func):
     commands, this decorator will also end up prompting the user once per
     command (in the case where multiple commands have no hosts set, of course.)
     """
-    from state import env
+    from fabric.state import env
     @wraps(func)
     def host_prompting_wrapper(*args, **kwargs):
         while not env.get('host_string', False):
-            env.host_string = raw_input("No hosts found. Please specify (single) host string for connection: ")
+            host_string = raw_input("No hosts found. Please specify (single) host string for connection: ")
+            interpret_host_string(host_string)
         return func(*args, **kwargs)
     return host_prompting_wrapper
+
+
+def interpret_host_string(host_string):
+    """
+    Apply given host string to the env dict.
+
+    Split it into hostname, username and port (using
+    `~fabric.network.normalize`) and store the full host string plus its
+    constituent parts into the appropriate env vars.
+
+    Returns the parts as split out by ``normalize`` for convenience.
+    """
+    from fabric.state import env
+    username, hostname, port = normalize(host_string)
+    env.host_string = host_string
+    env.host = hostname
+    env.user = username
+    env.port = port
+    return username, hostname, port
+
+
+def disconnect_all():
+    """
+    Disconnect from all currently connected servers.
+
+    Used at the end of ``fab``'s main loop, and also intended for use by
+    library users.
+    """
+    from fabric.state import connections, output
+    # Explicitly disconnect from all servers
+    for key in connections.keys():
+        if output.status:
+            print "Disconnecting from %s..." % denormalize(key),
+        connections[key].close()
+        if output.status:
+            print "done."

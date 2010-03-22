@@ -3,6 +3,7 @@ Useful non-core functionality, e.g. functions composing multiple operations.
 """
 
 from os import getcwd, sep
+from datetime import datetime
 
 from fabric.network import needs_host
 from fabric.operations import local, run, put
@@ -10,7 +11,7 @@ from fabric.state import env, output
 
 
 @needs_host
-def rsync_project(remote_dir, local_dir=None, exclude=[], delete=False,
+def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
     extra_opts=''):
     """
     Synchronize a remote directory with the current project directory via rsync.
@@ -47,6 +48,11 @@ def rsync_project(remote_dir, local_dir=None, exclude=[], delete=False,
     * ``extra_opts``: an optional, arbitrary string which you may use to pass
       custom arguments or options to ``rsync``.
 
+    Furthermore, this function transparently honors Fabric's port and SSH key
+    settings. Calling this function when the current host string contains a
+    nonstandard port, or when ``env.key_filename`` is non-empty, will use the
+    specified port and/or SSH key filename(s).
+
     For reference, the approximate ``rsync`` command-line call that is
     constructed by this function is the following:
 
@@ -56,18 +62,33 @@ def rsync_project(remote_dir, local_dir=None, exclude=[], delete=False,
     """
     # Turn single-string exclude into a one-item list for consistency
     if not hasattr(exclude, '__iter__'):
-        exclude = [exclude]
+        exclude = (exclude,)
     # Create --exclude options from exclude list
     exclude_opts = ' --exclude "%s"' * len(exclude)
     # Double-backslash-escape
     exclusions = tuple([str(s).replace('"', '\\\\"') for s in exclude])
+    # Honor SSH key(s)
+    key_string = ""
+    if env.key_filename:
+        keys = env.key_filename
+        # For ease of use, coerce stringish key filename into list
+        if not isinstance(env.key_filename, (list, tuple)):
+            keys = [keys]
+        key_string = "-i " + " -i ".join(keys)
+    # Honor nonstandard port
+    port_string = ("-p %s" % env.port) if (env.port != '22') else ""
+    # RSH
+    rsh_string = ""
+    if key_string or port_string:
+        rsh_string = "--rsh='ssh %s %s'" % (port_string, key_string)
     # Set up options part of string
     options_map = {
-        "delete"  : '--delete' if delete else '',
-        "exclude" : exclude_opts % exclusions,
-        "extra"   : extra_opts
+        'delete': '--delete' if delete else '',
+        'exclude': exclude_opts % exclusions,
+        'rsh': rsh_string,
+        'extra': extra_opts
     }
-    options = "%(delete)s%(exclude)s -pthrvz %(extra)s" % options_map
+    options = "%(delete)s%(exclude)s -pthrvz %(extra)s %(rsh)s" % options_map
     # Get local directory
     if local_dir is None:
         local_dir = '../' + getcwd().split(sep)[-1]
@@ -90,11 +111,9 @@ def upload_project():
     ``upload_project`` will attempt to clean up the tarfiles when it finishes
     executing.
     """
-    # TODO: use tempfile lib to make unique temp directory
-    # TODO: wrap in try/finally to clean up afterwards
-    # TODO: put in optional local_dir, remote_dir options
-    tar_file = "/tmp/fab.%(fab_timestamp)s.tar" % ENV
-    cwd_name = os.getcwd().split(os.sep)[-1]
+    tar_file = "/tmp/fab.%s.tar" % datetime.utcnow().strftime(
+        '%Y_%m_%d_%H-%M-%S')
+    cwd_name = getcwd().split(sep)[-1]
     tgz_name = cwd_name + ".tar.gz"
     local("tar -czf %s ." % tar_file)
     put(tar_file, cwd_name + ".tar.gz")

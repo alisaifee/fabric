@@ -9,10 +9,13 @@ Context managers for use with the ``with`` statement.
 
 from contextlib import contextmanager, nested
 
-from state import env, output
+from fabric.state import env, output
 
 
 def _set_output(groups, which):
+    """
+    Refactored subroutine used by ``hide`` and ``show``.
+    """
     # Preserve original values, pull in new given value to use
     previous = {}
     for group in output.expand_aliases(groups):
@@ -93,9 +96,11 @@ def settings(*args, **kwargs):
     * Most usefully, it allows temporary overriding/updating of ``env`` with
       any provided keyword arguments, e.g. ``with settings(user='foo'):``.
       Original values, if any, will be restored once the ``with`` block closes.
-    * In addition, it will use ``contextlib.nested`` to nest any given
+    * In addition, it will use `contextlib.nested`_ to nest any given
       non-keyword arguments, which should be other context managers, e.g.
       ``with settings(hide('stderr'), show('stdout')):``.
+
+    .. _contextlib.nested: http://docs.python.org/library/contextlib.html#contextlib.nested
 
     These behaviors may be specified at the same time if desired. An example
     will hopefully illustrate why this is considered useful::
@@ -136,8 +141,10 @@ def cd(path):
     a string similar to ``"cd <path> && "`` prefixed in order to give the sense
     that there is actually statefulness involved.
 
-    Since all other operations and contrib functions make use of `run` and/or
-    `sudo`, they will also naturally be affected by use of `cd`.
+    Because use of `cd` affects all `run` and `sudo` invocations, any code
+    making use of `run` and/or `sudo`, such as much of the ``contrib`` section,
+    will also be affected by use of `cd`. However, at this time, `get` and
+    `put` do not honor `cd`; we expect this to be fixed in future releases.
 
     Like the actual 'cd' shell builtin, `cd` may be called with relative paths
     (keep in mind that your default starting directory is your remote user's
@@ -163,20 +170,109 @@ def cd(path):
             with cd('website1'):
                 run('ls') # cd /var/www/website1 && ls
 
-    ..note::
+    .. note::
 
         This context manager is currently implemented by appending to (and, as
         always, restoring afterwards) the current value of an environment
-        variable, ``env.cwd``. By default, this variable is empty, and thus no
-        prefixing is performed.
+        variable, ``env.cwd``. However, this implementation may change in the
+        future, so we do not recommend manually altering ``env.cwd`` -- only
+        the *behavior* of `cd` will have any guarantee of backwards
+        compatibility.
 
-        However, this implementation may change in the future, so we do not
-        recommend manually altering ``env.cwd`` -- only the *behavior* of `cd`
-        will have any guarantee of backwards compatibility.
+    .. note::
+
+        Space characters will be escaped automatically to make dealing with
+        such directory names easier.
     """
+    path = path.replace(' ', '\ ')
     if env.get('cwd'):
-        # TODO: use platform-specific path join
         new_cwd = env.cwd + '/' + path
     else:
         new_cwd = path
     return _setenv(cwd=new_cwd)
+
+
+def path(path, behavior='append'):
+    """
+    Append the given ``path`` to the PATH used to execute any wrapped commands.
+
+    Any calls to `run` or `sudo` within the wrapped block will implicitly have
+    a string similar to ``"PATH=$PATH:<path> "`` prepended before the given
+    command.
+
+    You may customize the behavior of `path` by specifying the optional
+    ``behavior`` keyword argument, as follows:
+
+    * ``'append'``: append given path to the current ``$PATH``, e.g.
+      ``PATH=$PATH:<path>``. This is the default behavior.
+    * ``'prepend'``: prepend given path to the current ``$PATH``, e.g.
+      ``PATH=<path>:$PATH``.
+    * ``'replace'``: ignore previous value of ``$PATH`` altogether, e.g.
+      ``PATH=<path>``.
+
+    .. note::
+
+        This context manager is currently implemented by modifying (and, as
+        always, restoring afterwards) the current value of environment
+        variables, ``env.path`` and ``env.path_behavior``. However, this
+        implementation may change in the future, so we do not recommend
+        manually altering them directly.
+
+    .. versionadded:: 1.0
+    """
+    return _setenv(path=path, path_behavior=behavior)
+
+
+def prefix(command):
+    """
+    Prefix all wrapped `run`/`sudo` commands with given command plus ``&&``.
+
+    This is nearly identical to `~fabric.operations.cd`, except that nested
+    invocations append to a list of command strings instead of modifying a
+    single string.
+
+    Most of the time, you'll want to be using this alongside a shell script
+    which alters shell state, such as ones which export or alter shell
+    environment variables.
+
+    For example, one of the most common uses of this tool is with the
+    ``workon`` command from `virtualenvwrapper
+    <http://www.doughellmann.com/projects/virtualenvwrapper/>`_::
+
+        with prefix('workon myvenv'):
+            run('./manage.py syncdb')
+
+    In the above snippet, the actual shell command run would be this::
+
+        $ workon myvenv && ./manage.py syncdb
+
+    This context manager is compatible with `~fabric.context_managers.cd`, so
+    if your virtualenv doesn't ``cd`` in its ``postactivate`` script, you could
+    do the following::
+
+        with cd('/path/to/app'):
+            with prefix('workon myvenv'):
+                run('./manage.py syncdb')
+                run('./manage.py loaddata myfixture')
+
+    Which would result in executions like so::
+
+        $ cd /path/to/app && workon myvenv && ./manage.py syncdb
+        $ cd /path/to/app && workon myvenv && ./manage.py loaddata myfixture
+
+    Finally, as alluded to near the beginning,
+    `~fabric.context_managers.prefix` may be nested if desired, e.g.::
+
+        with prefix('workon myenv'):
+            run('ls')
+            with prefix('source /some/script'):
+                run('touch a_file')
+
+    The result::
+
+        $ workon myenv && ls
+        $ workon myenv && source /some/script && touch a_file
+
+    Contrived, but hopefully illustrative.
+    """
+    return _setenv(command_prefixes=env.command_prefixes + [command])

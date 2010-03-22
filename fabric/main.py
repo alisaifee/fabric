@@ -13,14 +13,13 @@ from operator import add
 from optparse import OptionParser
 import os
 import sys
-import textwrap
 
 from fabric import api # For checking callables against the API 
 from fabric.contrib import console, files, project # Ditto
-from network import denormalize, normalize
-import state # For easily-mockable access to roles, env and etc
-from state import commands, connections, env_options, win32
-from utils import abort, indent, warn
+from fabric.network import denormalize, interpret_host_string, disconnect_all
+from fabric import state # For easily-mockable access to roles, env and etc
+from fabric.state import commands, connections, env_options
+from fabric.utils import abort, indent
 
 
 # One-time calculation of "all internal callables" to avoid doing this on every
@@ -34,6 +33,8 @@ _internals = reduce(lambda x, y: x + filter(callable, vars(y).values()),
 def load_settings(path):
     """
     Take given file path and return dictionary of any key=value pairs found.
+
+    Usage docs are in docs/usage/fab.rst, in "Settings files."
     """
     if os.path.exists(path):
         comments = lambda s: s and not s.startswith("#")
@@ -44,38 +45,48 @@ def load_settings(path):
     return {}
 
 
+def _is_package(path):
+    """
+    Is the given path a Python package?
+    """
+    return (
+        os.path.isdir(path)
+        and os.path.exists(os.path.join(path, '__init__.py'))
+    )
+
+
 def find_fabfile():
     """
     Attempt to locate a fabfile, either explicitly or by searching parent dirs.
 
-    Uses the value of ``env.fabfile``, which defaults to ``fabfile.py``,
-    as the target of the search. This may be overridden on the command line.
-
-    If ``env.fabfile`` contains path elements other than a filename (e.g.
-    ``../fabfile.py`` or ``dir1/dir2/other.py``) it will be treated as a file
-    path and directly checked for existence without any sort of searching. When
-    in this mode, tile-expansion will be applied, so one may refer to e.g.
-    ``~/special_fabfile.py``.
-
-    Either way, `find_fabfile` will return an absolute path if a file is found,
-    or None otherwise.
+    Usage docs are in docs/usage/fabfiles.rst, in "Fabfile discovery."
     """
-    if os.path.dirname(state.env.fabfile):
-        expanded = os.path.expanduser(state.env.fabfile)
-        if os.path.exists(expanded):
-            return os.path.abspath(expanded)
-        else:
-            return None
+    # Obtain env value
+    names = [state.env.fabfile]
+    # Create .py version if necessary
+    if not names[0].endswith('.py'):
+        names += [names[0] + '.py']
+    # Does the name contain path elements?
+    if os.path.dirname(names[0]):
+        # If so, expand home-directory markers and test for existence
+        for name in names:
+            expanded = os.path.expanduser(name)
+            if os.path.exists(expanded):
+                if name.endswith('.py') or _is_package(expanded):
+                    return os.path.abspath(expanded)
     else:
+        # Otherwise, start in cwd and work downwards towards filesystem root
         path = '.'
         # Stop before falling off root of filesystem (should be platform
         # agnostic)
         while os.path.split(os.path.abspath(path))[1]:
-            joined = os.path.join(path, state.env.fabfile)
-            if os.path.exists(joined):
-                return os.path.abspath(joined)
+            for name in names:
+                joined = os.path.join(path, name)
+                if os.path.exists(joined):
+                    if name.endswith('.py') or _is_package(joined):
+                        return os.path.abspath(joined)
             path = os.path.join('..', path)
-        return None
+    # Implicit 'return None' if nothing was found
 
 
 def is_task(tup):
@@ -98,13 +109,29 @@ def load_fabfile(path):
     directory, fabfile = os.path.split(path)
     # If the directory isn't in the PYTHONPATH, add it so our import will work
     added_to_path = False
+    index = None
     if directory not in sys.path:
         sys.path.insert(0, directory)
         added_to_path = True
+    # If the directory IS in the PYTHONPATH, move it to the front temporarily,
+    # otherwise other fabfiles -- like Fabric's own -- may scoop the intended
+    # one.
+    else:
+        i = sys.path.index(directory)
+        if i != 0:
+            # Store index for later restoration
+            index = i
+            # Add to front, then remove from original position
+            sys.path.insert(0, directory)
+            del sys.path[i + 1]
     # Perform the import (trimming off the .py)
     imported = __import__(os.path.splitext(fabfile)[0])
     # Remove directory from path if we added it ourselves (just to be neat)
     if added_to_path:
+        del sys.path[0]
+    # Put back in original index if we moved it
+    if index is not None:
+        sys.path.insert(index + 1, directory)
         del sys.path[0]
     # Return dictionary of callables only (and don't include Fab operations or
     # underscored callables)
@@ -151,10 +178,6 @@ def parse_options():
         help="print detailed info about a given command and exit"
     )
 
-    # TODO: old 'let' functionality, i.e. global env additions/overrides
-    # maybe "set" as the keyword? i.e. -s / --set x=y
-    # allow multiple times (like with tar --exclude)
-
     #
     # Add in options which are also destined to show up as `env` vars.
     #
@@ -172,6 +195,9 @@ def parse_options():
 
 
 def list_commands():
+    """
+    Print all found commands/tasks, then exit. Invoked with -l/--list.
+    """
     print("Available commands:\n")
     # Want separator between name, description to be straight col
     max_len = reduce(lambda a, b: max(a, len(b)), commands.keys(), 0)
@@ -198,14 +224,22 @@ def list_commands():
 
 
 def display_command(command):
+    """
+    Print command function's docstring, then exit. Invoked with -d/--display.
+    """
     # Sanity check
     if command not in commands:
         abort("Command '%s' not found, exiting." % command)
-    # Print out nicely presented docstring
-    print("Displaying detailed information for command '%s':" % command)
-    print('')
-    print(indent(commands[command].__doc__, strip=True))
-    print('')
+    cmd = commands[command]
+    # Print out nicely presented docstring if found
+    if cmd.__doc__:
+        print("Displaying detailed information for command '%s':" % command)
+        print('')
+        print(indent(cmd.__doc__, strip=True))
+        print('')
+    # Or print notice if not
+    else:
+        print("No detailed information available for command '%s':" % command)
     sys.exit(0)
 
 
@@ -213,41 +247,7 @@ def parse_arguments(arguments):
     """
     Parse string list into list of tuples: command, args, kwargs, hosts, roles.
 
-    Parses the given list of arguments into command names and, optionally,
-    per-command args/kwargs. Per-command args are attached to the command name
-    with a colon (``:``), are comma-separated, and may use a=b syntax for
-    kwargs.  These args/kwargs are passed into the resulting command as normal
-    Python args/kwargs.
-
-    For example::
-
-        $ fab do_stuff:a,b,c=d
-
-    will result in the function call ``do_stuff(a, b, c=d)``.
-
-    If ``host`` or ``hosts`` kwargs are given, they will be used to fill
-    Fabric's host list (see `get_hosts`). ``hosts`` will override
-    ``host`` if both are given.
-
-    When using ``hosts`` in this way, one must use semicolons (``;``), and must
-    thus quote the host list string to prevent shell interpretation.
-
-    For example::
-
-        $ fab ping_servers:hosts="a;b;c",foo=bar
-
-    will result in Fabric's host list for the ``ping_servers`` command being set
-    to ``['a', 'b', 'c']``.
-    
-    ``host`` and ``hosts`` are removed from the kwargs mapping at this point, so
-    commands are not required to expect them. Thus, the resulting call of the
-    above example would be ``ping_servers(foo=bar)``.
-
-    ``role`` or ``roles`` behave the same as ``host``/``hosts``, but are used
-    as role names (which will eventually be turned into additional hosts).
-
-    Host- and role-related arguments may be specified simultaneously, in which
-    case they will be merged into a single effective host list.
+    See docs/usage/fab.rst, section on "per-task arguments" for details.
     """
     cmds = []
     for cmd in arguments:
@@ -279,16 +279,32 @@ def parse_arguments(arguments):
     return cmds
 
 
+def parse_remainder(arguments):
+    """
+    Merge list of "remainder arguments" into a single command string.
+    """
+    return ' '.join(arguments)
+
+
 def _merge(hosts, roles):
     """
     Merge given host and role lists into one list of deduped hosts.
     """
+    # Abort if any roles don't exist
+    bad_roles = [x for x in roles if x not in state.env.roledefs]
+    if bad_roles:
+        abort("The following specified roles do not exist:\n%s" % (
+            indent(bad_roles)
+        ))
+
     # Look up roles, turn into flat list of hosts
-    role_hosts = (
-        roles
-        and reduce(add, [state.env.roledefs[y] for y in roles])
-        or []
-    )
+    role_hosts = []
+    for role in roles:
+        value = state.env.roledefs[role]
+        # Handle "lazy" roles (callables)
+        if callable(value):
+            value = value()
+        role_hosts += value
     # Return deduped combo of hosts and role_hosts
     return list(set(hosts + role_hosts))
 
@@ -309,11 +325,10 @@ def get_hosts(command, cli_hosts, cli_roles):
     if func_hosts or func_roles:
         return _merge(func_hosts, func_roles)
     # Finally, the env is checked (which might contain globally set lists from
-    # the CLI or from module-level code).
-    if state.env.get('hosts'):
-        return state.env.hosts
-    # Empty list is the default if nothing is found.
-    return []
+    # the CLI or from module-level code). This will be the empty list if these
+    # have not been set -- which is fine, this method should return an empty
+    # list if no hosts have been set anywhere.
+    return _merge(state.env['hosts'], state.env['roles'])
 
 
 def update_output_levels(show, hide):
@@ -340,6 +355,10 @@ def main():
     try:
         # Parse command line options
         parser, options, arguments = parse_options()
+
+        # Handle regular args vs -- args
+        arguments = parser.largs
+        remainder_arguments = parser.rargs
 
         # Update env with any overridden option values
         # NOTE: This needs to remain the first thing that occurs
@@ -377,8 +396,12 @@ def main():
         commands.update(load_fabfile(fabfile))
 
         # Abort if no commands found
-        if not commands:
+        if not commands and not remainder_arguments:
             abort("Fabfile didn't contain any commands!")
+
+        # Now that we're settled on a fabfile, inform user.
+        if state.output.debug:
+            print("Using fabfile '%s'" % fabfile)
 
         # Handle list-commands option (now that commands are loaded)
         if options.list_commands:
@@ -389,14 +412,17 @@ def main():
             display_command(options.display)
 
         # If user didn't specify any commands to run, show help
-        if not arguments:
+        if not (arguments or remainder_arguments):
             parser.print_help()
             sys.exit(0) # Or should it exit with error (1)?
 
         # Parse arguments into commands to run (plus args/kwargs/hosts)
         commands_to_run = parse_arguments(arguments)
 
-        # Figure out if any specified names are invalid
+        # Parse remainders into a faux "command" to execute
+        remainder_command = parse_remainder(remainder_arguments)
+
+        # Figure out if any specified task names are invalid
         unknown_commands = []
         for tup in commands_to_run:
             if tup[0] not in commands:
@@ -407,23 +433,30 @@ def main():
             abort("Command(s) not found:\n%s" \
                 % indent(unknown_commands))
 
+        # Generate remainder command and insert into commands, commands_to_run
+        if remainder_command:
+            r = '<remainder>'
+            commands[r] = lambda: api.run(remainder_command)
+            commands_to_run.append((r, [], {}, [], []))
+
         # At this point all commands must exist, so execute them in order.
         for name, args, kwargs, cli_hosts, cli_roles in commands_to_run:
             # Get callable by itself
             command = commands[name]
             # Set current command name (used for some error messages)
             state.env.command = name
-            # Set host list
-            hosts = get_hosts(command, cli_hosts, cli_roles)
+            # Set host list (also copy to env)
+            state.env.all_hosts = hosts = get_hosts(
+                command, cli_hosts, cli_roles)
             # If hosts found, execute the function on each host in turn
             for host in hosts:
-                username, hostname, port = normalize(host)
-                state.env.host_string = host
-                state.env.host = hostname
                 # Preserve user
                 prev_user = state.env.user
-                state.env.user = username
-                state.env.port = port
+                # Split host string and apply to env dict
+                username, hostname, port = interpret_host_string(host)
+                # Log to stdout
+                if state.output.running:
+                    print("[%s] Executing task '%s'" % (host, name))
                 # Actually run command
                 commands[name](*args, **kwargs)
                 # Put old user back
@@ -439,18 +472,12 @@ def main():
         raise
     except KeyboardInterrupt:
         if state.output.status:
-            print >>sys.stderr, "\nStopped."
+            print >> sys.stderr, "\nStopped."
         sys.exit(1)
     except:
         sys.excepthook(*sys.exc_info())
         # we might leave stale threads if we don't explicitly exit()
         sys.exit(1)
     finally:
-        # Explicitly disconnect from all servers
-        for key in connections.keys():
-            if state.output.status:
-                print "Disconnecting from %s..." % denormalize(key),
-            connections[key].close()
-            if state.output.status:
-                print "done."
+        disconnect_all()
     sys.exit(0)
