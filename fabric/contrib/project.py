@@ -3,12 +3,15 @@ Useful non-core functionality, e.g. functions composing multiple operations.
 """
 
 from os import getcwd, sep
+import os.path
 from datetime import datetime
+from tempfile import mkdtemp
 
 from fabric.network import needs_host
 from fabric.operations import local, run, put
 from fabric.state import env, output
 
+__all__ = ['rsync_project', 'upload_project']
 
 @needs_host
 def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
@@ -33,13 +36,26 @@ def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
     ``rsync_project()`` takes the following parameters:
 
     * ``remote_dir``: the only required parameter, this is the path to the
-      **parent** directory on the remote server; the project directory will be
-      created inside this directory. For example, if one's project directory is
-      named ``myproject`` and one invokes ``rsync_project('/home/username/')``,
-      the resulting project directory will be ``/home/username/myproject/``.
+      directory on the remote server. Due to how ``rsync`` is implemented, the
+      exact behavior depends on the value of ``local_dir``:
+
+        * If ``local_dir`` ends with a trailing slash, the files will be
+          dropped inside of ``remote_dir``. E.g.
+          ``rsync_project("/home/username/project", "foldername/")`` will drop
+          the contents of ``foldername`` inside of ``/home/username/project``.
+        * If ``local_dir`` does **not** end with a trailing slash (and this
+          includes the default scenario, when ``local_dir`` is not specified),
+          ``remote_dir`` is effectively the "parent" directory, and a new
+          directory named after ``local_dir`` will be created inside of it. So
+          ``rsync_project("/home/username", "foldername")`` would create a new
+          directory ``/home/username/foldername`` (if needed) and place the
+          files there.
+
     * ``local_dir``: by default, ``rsync_project`` uses your current working
-      directory as the source directory; you may override this with
-      ``local_dir``, which should be a directory path.
+      directory as the source directory. This may be overridden by specifying
+      ``local_dir``, which is a string passed verbatim to ``rsync``, and thus
+      may be a single directory (``"my_directory"``) or multiple directories
+      (``"dir1 dir2"``). See the ``rsync`` documentation for details.
     * ``exclude``: optional, may be a single string, or an iterable of strings,
       and is used to pass one or more ``--exclude`` options to ``rsync``.
     * ``delete``: a boolean controlling whether ``rsync``'s ``--delete`` option
@@ -54,7 +70,7 @@ def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
     specified port and/or SSH key filename(s).
 
     For reference, the approximate ``rsync`` command-line call that is
-    constructed by this function is the following:
+    constructed by this function is the following::
 
         rsync [--delete] [--exclude exclude[0][, --exclude[1][, ...]]] \\
             -pthrvz [extra_opts] <local_dir> <host_string>:<remote_dir>
@@ -100,23 +116,42 @@ def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
     return local(cmd)
 
 
-def upload_project():
+def upload_project(local_dir=None, remote_dir=""):
     """
-    Upload the current project to a remote system, tar/gzipping during the move.
+    Upload the current project to a remote system via ``tar``/``gzip``.
 
-    This function makes use of the ``/tmp/`` directory and the ``tar`` and
-    ``gzip`` programs/libraries; thus it will not work too well on Win32
-    systems unless one is using Cygwin or something similar.
+    ``local_dir`` specifies the local project directory to upload, and defaults
+    to the current working directory.
+    
+    ``remote_dir`` specifies the target directory to upload into (meaning that
+    a copy of ``local_dir`` will appear as a subdirectory of ``remote_dir``)
+    and defaults to the remote user's home directory.
 
-    ``upload_project`` will attempt to clean up the tarfiles when it finishes
-    executing.
+    This function makes use of the ``tar`` and ``gzip`` programs/libraries,
+    thus it will not work too well on Win32 systems unless one is using Cygwin
+    or something similar. It will attempt to clean up the local and remote
+    tarfiles when it finishes executing, even in the event of a failure.
+
+    .. versionchanged:: 1.1
+        Added the ``local_dir`` and ``remote_dir`` kwargs.
     """
-    tar_file = "/tmp/fab.%s.tar" % datetime.utcnow().strftime(
-        '%Y_%m_%d_%H-%M-%S')
-    cwd_name = getcwd().split(sep)[-1]
-    tgz_name = cwd_name + ".tar.gz"
-    local("tar -czf %s ." % tar_file)
-    put(tar_file, cwd_name + ".tar.gz")
-    local("rm -f " + tar_file)
-    run("tar -xzf " + tgz_name)
-    run("rm -f " + tgz_name)
+    local_dir = local_dir or os.getcwd()
+
+    # Remove final '/' in local_dir so that basename() works
+    local_dir = local_dir.rstrip(os.sep)
+
+    local_path, local_name = os.path.split(local_dir)
+    tar_file = "%s.tar.gz" % local_name
+    target_tar = os.path.join(remote_dir, tar_file)
+    tmp_folder = mkdtemp()
+
+    try:
+        tar_path = os.path.join(tmp_folder, tar_file)
+        local("tar -czf %s -C %s %s" % (tar_path, local_path, local_name))
+        put(tar_path, target_tar)
+        try:
+            run("tar -xzf %s" % tar_file)
+        finally:
+            run("rm -f %s" % tar_file)
+    finally:
+        local("rm -rf %s" % tmp_folder)

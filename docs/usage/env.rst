@@ -20,9 +20,9 @@ commonly-modified env vars include:
 * ``user``: Fabric defaults to your local username when making SSH connections,
   but you can use ``env.user`` to override this if necessary. The :doc:`execution`
   documentation also has info on how to specify usernames on a per-host basis.
-* ``password``: Used to explicitly set your connection or sudo password if
-  desired. Fabric will prompt you when necessary if this isn't set or doesn't
-  appear to be valid.
+* ``password``: Used to explicitly set your default connection or sudo password
+  if desired. Fabric will prompt you when necessary if this isn't set or
+  doesn't appear to be valid.
 * ``warn_only``: a Boolean setting determining whether Fabric exits when
   detecting errors on the remote end. See :doc:`execution` for more on this
   behavior.
@@ -104,6 +104,23 @@ as `~fabric.context_managers.cd`.
 Note that many of these may be set via ``fab``'s command-line switches -- see
 :doc:`fab` for details. Cross-links will be provided where appropriate.
 
+.. _abort-on-prompts:
+
+``abort_on_prompts``
+--------------------
+
+**Default:** ``False``
+
+When ``True``, Fabric will run in a non-interactive mode, calling
+`~fabric.utils.abort` anytime it would normally prompt the user for input (such
+as password prompts, "What host to connect to?" prompts, fabfile invocation of
+`~fabric.operations.prompt`, and so forth.) This allows users to ensure a Fabric
+session will always terminate cleanly instead of blocking on user input forever
+when unforeseen circumstances arise.
+
+.. versionadded:: 1.1
+.. seealso:: :option:`--abort-on-prompts`
+
 ``all_hosts``
 -------------
 
@@ -119,14 +136,26 @@ informational purposes only.
 ``always_use_pty``
 ------------------
 
-**Default:** ``False``
+**Default:** ``True``
 
-When set to ``True``, causes `~fabric.operations.run`/`~fabric.operations.sudo`
-to act as if they have been called with ``pty=True``. (To disable on a
-per-invocation basis, manually specify ``pty=False``.)
+When set to ``False``, causes `~fabric.operations.run`/`~fabric.operations.sudo`
+to act as if they have been called with ``pty=False``.
 
-The command-line flag :option:`--pty`, if given, will set this env var to
-``True``.
+The command-line flag :option:`--no-pty`, if given, will set this env var to
+``False``.
+
+.. versionadded:: 1.0
+
+.. _combine-stderr:
+
+``combine_stderr``
+------------------
+
+**Default**: ``True``
+
+Causes the SSH layer to merge a remote program's stdout and stderr streams to
+avoid becoming meshed together when printed. See :ref:`combine_streams` for
+details on why this is needed and what its effects are.
 
 .. versionadded:: 1.0
 
@@ -173,6 +202,19 @@ host key is actually valid (e.g. cloud servers such as EC2.)
 
 .. seealso:: :doc:`ssh`
 
+.. _exclude-hosts:
+
+``exclude_hosts``
+-----------------
+
+**Default:** ``[]``
+
+Specifies a list of host strings to be :ref:`skipped over <exclude-hosts>`
+during ``fab`` execution. Typically set via :option:`--exclude-hosts/-x <-x>`.
+
+.. versionadded:: 1.1
+
+
 ``fabfile``
 -----------
 
@@ -183,6 +225,8 @@ doesn't make sense to set this in a fabfile, but it may be specified in a
 ``.fabricrc`` file or on the command line.
 
 .. seealso:: :doc:`fab`
+
+.. _host_string:
 
 ``host_string``
 ---------------
@@ -215,6 +259,20 @@ The global host list used when composing per-task host lists.
 
 .. seealso:: :doc:`execution`
 
+.. _keepalive:
+
+``keepalive``
+-------------
+
+**Default:** ``0`` (i.e. no keepalive)
+
+An integer specifying an SSH keepalive interval to use; basically maps to the
+SSH config option ``ClientAliveInterval``. Useful if you find connections are
+timing out due to meddlesome network hardware or what have you.
+
+.. seealso:: :option:`--keepalive`
+.. versionadded:: 1.1
+
 .. _key-filename:
 
 ``key_filename``
@@ -228,6 +286,41 @@ set/appended to with :option:`-i`.
 
 .. seealso:: `Paramiko's documentation for SSHClient.connect() <http://www.lag.net/paramiko/docs/paramiko.SSHClient-class.html#connect>`_
 
+.. _local-user:
+
+``local_user``
+--------------
+
+A read-only value containing the local system username. This is the same value
+as :ref:`user`'s initial value, but whereas :ref:`user` may be altered by CLI
+arguments, Python code or specific host strings, :ref:`local-user` will always
+contain the same value.
+
+.. _no_agent:
+
+``no_agent``
+------------------
+
+**Default:** ``False``
+
+If ``True``, will tell Paramiko not to seek out running SSH agents when using
+key-based authentication.
+
+.. versionadded:: 0.9.1
+
+.. _no_keys:
+
+``no_keys``
+------------------
+
+**Default:** ``False``
+
+If ``True``, will tell Paramiko not to load any private key files from one's
+``$HOME/.ssh/`` folder. (Key files explicitly loaded via ``fab -i`` will still
+be used, of course.)
+
+.. versionadded:: 0.9.1
+
 .. _password:
 
 ``password``
@@ -235,19 +328,42 @@ set/appended to with :option:`-i`.
 
 **Default:** ``None``
 
-The password used by the SSH layer when connecting to remote hosts, **and/or**
-when answering `~fabric.operations.sudo` prompts.
+The default password used by the SSH layer when connecting to remote hosts,
+**and/or** when answering `~fabric.operations.sudo` prompts.
 
-When empty, the user will be prompted, with the result stored in this env
-variable and used for connecting/sudoing. (In other words, setting this prior
-to runtime is not required, though it may be convenient in some cases.)
+.. seealso:: :ref:`passwords`
+.. seealso:: :ref:`password-management`
 
-Given a session where multiple different passwords are used, only the first one
-will be stored into ``env.password``. Put another way, the only time
-``env.password`` is written to by Fabric itself is when it is empty. This may
-change in the future.
+.. _passwords:
 
-.. seealso:: :doc:`execution`
+``passwords``
+-------------
+
+**Default:** ``{}``
+
+This dictionary is largely for internal use, and is filled automatically as a
+per-host-string password cache. Keys are full :ref:`host strings
+<host-strings>` and values are passwords (strings).
+
+.. seealso:: :ref:`password-management`
+
+.. versionadded:: 1.0
+
+
+.. _env-path:
+
+``path``
+--------
+
+**Default:** ``''``
+
+Used to set the remote ``$PATH`` when executing commands in
+`~fabric.operations.run`/`~fabric.operations.sudo`. It is recommended to use
+the `~fabric.context_managers.path` context manager for managing this value
+instead of setting it directly.
+
+.. versionadded:: 1.0
+
 
 ``port``
 --------

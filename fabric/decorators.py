@@ -1,10 +1,21 @@
 """
 Convenience decorators for use in fabfiles.
 """
+from __future__ import with_statement
 
 from functools import wraps
-from fabric.state import env,output
-from fabric.utils import abort,indent,warn,args2str
+from types import StringTypes
+
+from fabric import tasks
+from .context_managers import settings
+
+
+def task(func):
+    """
+    Decorator declaring the wrapped function as a :ref:`new-style task <new-style-tasks>`.
+    """
+    return tasks.WrappedCallableTask(func)
+
 
 def hosts(*host_list):
     """
@@ -18,14 +29,27 @@ def hosts(*host_list):
         def my_func():
             pass
 
+    `~fabric.decorators.hosts` may be invoked with either an argument list
+    (``@hosts('host1')``, ``@hosts('host1', 'host2')``) or a single, iterable
+    argument (``@hosts(['host1', 'host2'])``).
+
     Note that this decorator actually just sets the function's ``.hosts``
     attribute, which is then read prior to executing the function.
+
+    .. versionchanged:: 0.9.2
+        Allow a single, iterable argument (``@hosts(iterable)``) to be used
+        instead of requiring ``@hosts(*iterable)``.
     """
+
     def attach_hosts(func):
         @wraps(func)
         def inner_decorator(*args, **kwargs):
             return func(*args, **kwargs)
-        inner_decorator.hosts = list(host_list)
+        _hosts = host_list
+        # Allow for single iterable argument as well as *args
+        if len(_hosts) == 1 and not isinstance(_hosts[0], StringTypes):
+            _hosts = _hosts[0]
+        inner_decorator.hosts = list(_hosts)
         return inner_decorator
     return attach_hosts
 
@@ -48,14 +72,24 @@ def roles(*role_list):
         def my_func():
             pass
 
-    Note that this decorator actually just sets the function's ``.roles``
-    attribute, which is then read prior to executing the function.
+    As with `~fabric.decorators.hosts`, `~fabric.decorators.roles` may be
+    invoked with either an argument list or a single, iterable argument.
+    Similarly, this decorator uses the same mechanism as
+    `~fabric.decorators.hosts` and simply sets ``<function>.roles``.
+
+    .. versionchanged:: 0.9.2
+        Allow a single, iterable argument to be used (same as
+        `~fabric.decorators.hosts`).
     """
     def attach_roles(func):
         @wraps(func)
         def inner_decorator(*args, **kwargs):
             return func(*args, **kwargs)
-        inner_decorator.roles = list(role_list)
+        _roles = role_list
+        # Allow for single iterable argument as well as *args
+        if len(_roles) == 1 and not isinstance(_roles[0], StringTypes):
+            _roles = _roles[0]
+        inner_decorator.roles = list(_roles)
         return inner_decorator
     return attach_roles
 
@@ -69,57 +103,38 @@ def runs_once(func):
     typical use means "once per invocation of the ``fab`` program".
 
     Any function wrapped with this decorator will silently fail to execute the
-    2nd, 3rd, ..., Nth time it is called, and will return None in that instance.
+    2nd, 3rd, ..., Nth time it is called, and will return the value of the
+    original run.
     """
     @wraps(func)
     def decorated(*args, **kwargs):
-        if hasattr(decorated, 'has_run'):
-            return
-        else:
-            decorated.has_run = True
-            return func(*args, **kwargs)
+        if not hasattr(decorated, 'return_value'):
+            decorated.return_value = func(*args, **kwargs)
+        return decorated.return_value
     return decorated
 
 
-def fabricop(func):
+def with_settings(**kw_settings):
     """
-    Decorator defining a fabric operation to be used in fabfiles.
+    Decorator equivalent of ``fabric.context_managers.settings``.
 
-    For example, the following will ensure that, when ``my_fabricop`` is called 
-    without ``my_var`` under a :func:`warnings_only<fabric.context_managers.warnings_only>`
-    scope, the execution is not terminated and is simply logged as a warning::
-    
-        @fabricop
-        def my_fabricop(**kwargs):
-            if 'my_var' not in kwargs.keys():
-                raise AttributeError("my_var not defined")
-        with warnings_only():
-            my_fabricop()
+    Allows you to wrap an entire function as if it was called inside a block
+    with the ``settings`` context manager. This may be useful if you know you
+    want a given setting applied to an entire function body, or wish to
+    retrofit old code without indenting everything.
 
-    .. note::
-        This is a convenience decorator for people writing internal operations
-        or :mod:`contrib<fabric.contrib>` libraries for fabric. It is meant to 
-        ensure that all fabric operations that users will apply in their fabfiles 
-        behave consistently.
+    For example, to turn aborts into warnings for an entire task function::
+
+        @with_settings(warn_only=True)
+        def foo():
+            ...
+
+    .. seealso:: `~fabric.context_managers.settings`
+    .. versionadded:: 1.1
     """
-    err_func = env.warn_only and warn or abort
-    @wraps(func)
-    def function_handler(*args,**kwargs):
-        try:
-            if output.running:
-                print("[%s] %s: %s" % \
-                      (env.host_string, func.__name__, args2str(*args,**kwargs)))
-            return func(*args,**kwargs)
-        except Exception,e:
-            if hasattr(e, 'strerror'):
-                underlying_msg = e.strerror
-            else:
-                underlying_msg = e
-            err_func("%s %s\n\nUnderlying exception message:\n%s" % (
-                  func.__name__,
-                  args2str(*args,**kwargs),
-                  indent(underlying_msg)
-                ))
-        
-    function_handler.wrapped = func
-    return function_handler
+    def outer(func):
+        def inner(*args, **kwargs):
+            with settings(**kw_settings):
+                return func(*args, **kwargs)
+        return inner
+    return outer

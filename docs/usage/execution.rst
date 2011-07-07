@@ -66,76 +66,10 @@ down to the individual function calls) enables shell script-like logic where
 you may introspect the output or return code of a given command and decide what
 to do next.
 
-
-.. _tasks-and-imports:
-
 Defining tasks
 ==============
 
-When looking for tasks to execute, Fabric imports your fabfile and will
-consider any callable object, **except** for the following:
-
-* Callables whose name starts with an underscore (``_``). In other words,
-  Python's usual "private" convention holds true here.
-* Callables defined within Fabric itself. Fabric's own functions such as
-  `~fabric.operations.run` and `~fabric.operations.sudo`  will not show up in
-  your task list.
-
-.. note::
-
-    To see exactly which callables in your fabfile may be executed via ``fab``,
-    use :option:`fab --list <-l>`.
-
-Imports
--------
-
-Python's ``import`` statement effectively includes the imported objects in your
-module's namespace. Since Fabric's fabfiles are just Python modules, this means
-that imports are also considered as possible tasks, alongside anything defined
-in the fabfile itself.
-
-Because of this, we strongly recommend that you use the ``import module`` form
-of importing, followed by ``module.callable()``, which will result in a cleaner
-fabfile API than doing ``from module import callable``.
-
-For example, here's a sample fabfile which uses ``urllib.urlopen`` to get some
-data out of a webservice::
-
-    from urllib import urlopen
-
-    from fabric.api import run
-
-    def webservice_read():
-        objects = urlopen('http://my/web/service/?foo=bar').read().split()
-        print(objects)
-
-This looks simple enough, and will run without error. However, look what
-happens if we run :option:`fab --list <-l>` on this fabfile::
-
-    $ fab --list
-    Available commands:
-
-      my_task    List some directories.   
-      urlopen    urlopen(url [, data]) -> open file-like object
-
-Our fabfile of only one task is showing two "tasks", which is bad enough, and
-an unsuspecting user might accidentally try to call ``fab urlopen``, which
-probably won't work very well. Imagine any real-world fabfile, which is likely
-to be much more complex, and hopefully you can see how this could get messy
-fast.
-
-For reference, here's the recommended way to do it::
-
-    import urllib
-
-    from fabric.api import run
-
-    def webservice_read():
-        objects = urllib.urlopen('http://my/web/service/?foo=bar').read().split()
-        print(objects)
-
-It's a simple change, but it'll make anyone using your fabfile a bit happier.
-
+For details on what constitutes a Fabric task and how to organize them, please see :doc:`/usage/tasks`.
 
 Defining host lists
 ===================
@@ -145,6 +79,8 @@ the primary use-case) having tasks won't do you any good without the ability to
 specify remote hosts on which to execute them. There are a number of ways to do
 so, with scopes varying from global to per-task, and it's possible mix and
 match as needed.
+
+.. _host-strings:
 
 Hosts
 -----
@@ -156,8 +92,9 @@ strings specifying a username, hostname and port combination, in the form of
 username, and/or port 22, respectively. Thus, ``admin@foo.com:222``,
 ``deploy@website`` and ``nameserver1`` could all be valid host strings.
 
-In other words, Fabric expects the same format as the command-line ``ssh``
-program.
+.. note::
+    The user/hostname split occurs at the last ``@`` found, so e.g. email
+    address usernames are valid and will be parsed correctly.
 
 During execution, Fabric normalizes the host strings given and then stores each
 part (username/hostname/port) in the environment dictionary, for both its use
@@ -200,7 +137,7 @@ time when calling e.g. ``fab --list``.)
 Use of roles is not required in any way -- it's simply a convenience in
 situations where you have common groupings of servers.
 
-.. versionchanged:: 1.0
+.. versionchanged:: 0.9.2
     Added ability to use callables as ``roledefs`` values.
 
 .. _host-lists:
@@ -234,7 +171,7 @@ is imported::
 Such a fabfile, run simply as ``fab mytask``, will run ``mytask`` on ``host1``
 followed by ``host2``.
 
-Since the env vars are checked for *each* host, this means that if you have the
+Since the env vars are checked for *each* task, this means that if you have the
 need, you can actually modify ``env`` in one task and it will affect all
 following tasks::
 
@@ -262,10 +199,10 @@ look up in ``env.roledefs``.
 Globally, via the command line
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In addition to modifying ``env.hosts`` and ``env.roles`` at the module level,
-you may define them by passing comma-separated string arguments to the
-command-line switches :option:`--hosts/-H <-H>` and :option:`--roles/-R <-R>`,
-e.g.::
+In addition to modifying ``env.hosts``, ``env.roles``, and
+``env.exclude_hosts`` at the module level, you may define them by passing
+comma-separated string arguments to the command-line switches
+:option:`--hosts/-H <-H>` and :option:`--roles/-R <-R>`, e.g.::
 
     $ fab -H host1,host2 mytask
 
@@ -295,7 +232,7 @@ instead::
         run('ls /var/www')
 
 When this fabfile is run as ``fab -H host1,host2 mytask``, ``env.hosts`` will
-end contain ``['host1', 'host2', 'host3', 'host4']`` at the time that
+then contain ``['host1', 'host2', 'host3', 'host4']`` at the time that
 ``mytask`` is executed.
 
 .. note::
@@ -341,6 +278,7 @@ To specify per-task hosts for ``mytask``, execute it like so::
 This will override any other host list and ensure ``mytask`` always runs on
 just those two hosts.
 
+
 Per-task, via decorators
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -355,14 +293,22 @@ decorators. These decorators take a variable argument list, like so::
     def mytask():
         run('ls /var/www')
 
-When used, they override any checks of ``env`` for that particular task's host
-list (though ``env`` is not modified in any way -- it is simply ignored.) Thus,
-even if the above fabfile had defined ``env.hosts`` or the call to :doc:`fab
-<fab>` uses :option:`--hosts/-H <-H>`, ``mytask`` would still run on a host list of
-``['host1', 'host2']``.
+They will also take an single iterable argument, e.g.::
+
+    my_hosts = ('host1', 'host2')
+    @hosts(my_hosts)
+    def mytask():
+        # ...
+
+When used, these decorators override any checks of ``env`` for that particular
+task's host list (though ``env`` is not modified in any way -- it is simply
+ignored.) Thus, even if the above fabfile had defined ``env.hosts`` or the call
+to :doc:`fab <fab>` uses :option:`--hosts/-H <-H>`, ``mytask`` would still run
+on a host list of ``['host1', 'host2']``.
 
 However, decorator host lists do **not** override per-task command-line
 arguments, as given in the previous section.
+
 
 Order of precedence
 ~~~~~~~~~~~~~~~~~~~
@@ -413,6 +359,36 @@ Assuming no command-line hosts or roles are given when ``mytask`` is executed,
 this fabfile will call ``mytask`` on a host list of ``['a', 'b', 'c']`` -- the
 union of ``role1`` and the contents of the `~fabric.decorators.hosts` call.
 
+.. _excluding-hosts:
+
+Excluding specific hosts
+------------------------
+
+At times, it is useful to exclude one or more specific hosts, e.g. to override
+a few bad or otherwise undesirable hosts which are pulled in from a role or an
+autogenerated host list. This may be accomplished globally with
+:option:`--exclude-hosts/-x <-x>`::
+
+    $ fab -R myrole -x host2,host5 mytask
+
+If ``myrole`` was defined as ``['host1', 'host2', ..., 'host15']``, the above
+invocation would run with an effective host list of ``['host1', 'host3',
+'host4', 'host6', ..., 'host15']``.
+
+    .. note::
+        Using this option does not modify ``env.hosts`` -- it only causes the
+        main execution loop to skip the requested hosts.
+
+Exclusions may be specified per-task by using an extra ``exclude_hosts`` kwarg,
+which is implemented similarly to the abovementioned ``hosts`` and ``roles``
+per-task kwargs, in that it is stripped from the actual task invocation. This
+example would have the same result as the global exclude above::
+
+    $ fab -R myrole mytask:exclude_hosts="host2;host5"
+
+Note that the host list is semicolon-separated, just as with the ``hosts``
+per-task argument.
+
 
 .. _failures:
 
@@ -433,6 +409,7 @@ immediately. However, if ``env.warn_only`` is set to ``True`` at the time of
 failure -- with, say, the `~fabric.context_managers.settings` context
 manager -- Fabric will emit a warning message but continue executing.
 
+.. _connections:
 
 Connections
 ===========
@@ -509,3 +486,40 @@ before their program exits. This can be accomplished by calling
     `~fabric.network.disconnect_all` may be moved to a more public location in
     the future; we're still working on making the library aspects of Fabric
     more solidified and organized.
+
+
+.. _password-management:
+
+Password management
+===================
+
+Fabric maintains an in-memory, two-tier password cache to help remember your
+login and sudo passwords in certain situations; this helps avoid tedious
+re-entry when multiple systems share the same password [#]_, or if a remote
+system's ``sudo`` configuration doesn't do its own caching.
+
+The first layer is a simple default or fallback password cache,
+:ref:`env.password <password>`. This env var stores a single password which (if
+non-empty) will be tried in the event that the host-specific cache (see below)
+has no entry for the current :ref:`host string <host_string>`.
+
+:ref:`env.passwords <passwords>` (plural!) serves as a per-user/per-host cache,
+storing the most recently entered password for every unique user/host/port
+combination.  Due to this cache, connections to multiple different users and/or
+hosts in the same session will only require a single password entry for each.
+(Previous versions of Fabric used only the single, default password cache and
+thus required password re-entry every time the previously entered password
+became invalid.)
+
+Depending on your configuration and the number of hosts your session will
+connect to, you may find setting either or both of these env vars to be useful.
+However, Fabric will automatically fill them in as necessary without any
+additional configuration.
+
+Specifically, each time a password prompt is presented to the user, the value
+entered is used to update both the single default password cache, and the cache
+value for the current value of ``env.host_string``.
+
+.. [#] We highly recommend the use of SSH `key-based access
+    <http://en.wikipedia.org/wiki/Public_key>`_ instead of relying on
+    homogeneous password setups, as it's significantly more secure.
