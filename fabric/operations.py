@@ -36,16 +36,17 @@ def _pty_size():
     """
     Obtain (rows, cols) tuple for sizing a pty on the remote end.
 
-    Defaults to 80x24 (which is also the Paramiko default) but will detect
+    Defaults to 80x24 (which is also the 'ssh' lib's default) but will detect
     local (stdout-based) terminal window size on non-Windows platforms.
     """
     rows, cols = 24, 80
-    if not win32 and sys.stdin.isatty():
+    if not win32 and sys.stdout.isatty():
         # We want two short unsigned integers (rows, cols)
         fmt = 'HH'
         # Create an empty (zeroed) buffer for ioctl to map onto. Yay for C!
         buffer = struct.pack(fmt, 0, 0)
-        # Call TIOCGWINSZ to get window size of stdout, returns our filled buffer
+        # Call TIOCGWINSZ to get window size of stdout, returns our filled
+        # buffer
         try:
             result = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ,
                 buffer)
@@ -393,11 +394,14 @@ def put(local_path=None, remote_path=None, use_sudo=False,
     ftp = SFTP(env.host_string)
 
     with closing(ftp) as ftp:
-        # Expand tildes (assumption: default remote cwd is user $HOME)
         home = ftp.normalize('.')
 
         # Empty remote path implies cwd
         remote_path = remote_path or home
+
+        # Expand tildes
+        if remote_path.startswith('~'):
+            remote_path = remote_path.replace('~', home, 1)
 
         # Honor cd() (assumes Unix style file paths on remote end)
         if not os.path.isabs(remote_path) and env.get('cwd'):

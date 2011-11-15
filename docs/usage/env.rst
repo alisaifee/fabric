@@ -220,7 +220,8 @@ during ``fab`` execution. Typically set via :option:`--exclude-hosts/-x <-x>`.
 
 **Default:** ``fabfile.py``
 
-Filename which ``fab`` searches for when loading fabfiles. Obviously, it
+Filename pattern which ``fab`` searches for when loading fabfiles.
+To indicate a specific file, use the full path to the file. Obviously, it
 doesn't make sense to set this in a fabfile, but it may be specified in a
 ``.fabricrc`` file or on the command line.
 
@@ -286,6 +287,21 @@ set/appended to with :option:`-i`.
 
 .. seealso:: `Paramiko's documentation for SSHClient.connect() <http://www.lag.net/paramiko/docs/paramiko.SSHClient-class.html#connect>`_
 
+.. _env-linewise:
+
+``linewise``
+------------
+
+**Default:** ``False``
+
+Forces buffering by line instead of by character/byte, typically when running
+in parallel mode. May be activated via :option:`--linewise`.
+
+.. seealso:: :ref:`linewise-output`
+
+.. versionadded:: 1.3
+
+
 .. _local-user:
 
 ``local_user``
@@ -303,8 +319,8 @@ contain the same value.
 
 **Default:** ``False``
 
-If ``True``, will tell Paramiko not to seek out running SSH agents when using
-key-based authentication.
+If ``True``, will tell the SSH layer not to seek out running SSH agents when
+using key-based authentication.
 
 .. versionadded:: 0.9.1
 
@@ -315,9 +331,9 @@ key-based authentication.
 
 **Default:** ``False``
 
-If ``True``, will tell Paramiko not to load any private key files from one's
-``$HOME/.ssh/`` folder. (Key files explicitly loaded via ``fab -i`` will still
-be used, of course.)
+If ``True``, will tell the SSH layer not to load any private key files from
+one's ``$HOME/.ssh/`` folder. (Key files explicitly loaded via ``fab -i`` will
+still be used, of course.)
 
 .. versionadded:: 0.9.1
 
@@ -363,6 +379,19 @@ the `~fabric.context_managers.path` context manager for managing this value
 instead of setting it directly.
 
 .. versionadded:: 1.0
+
+
+.. _pool-size:
+
+``pool_size``
+-------------
+
+**Default:** ``0``
+
+Sets the number of concurrent processes to use when executing tasks in parallel.
+
+.. versionadded:: 1.3
+.. seealso:: :doc:`parallel`, :option:`-z`
 
 
 ``port``
@@ -426,6 +455,18 @@ The global role list used when composing per-task host lists.
 
 .. seealso:: :doc:`execution`
 
+.. _env-parallel:
+
+``parallel``
+-------------------
+
+**Default:** ``False``
+
+When ``True``, forces all tasks to run in parallel.
+
+.. versionadded:: 1.3
+.. seealso:: :doc:`parallel`
+
 .. _shell:
 
 ``shell``
@@ -438,7 +479,7 @@ Value used as shell wrapper when executing commands with e.g.
 "<command goes here>"`` -- e.g. the default uses Bash's ``-c`` option which
 takes a command string as its value.
 
-.. seealso:: :doc:`execution`
+.. seealso:: :ref:`FAQ on bash as default shell <faq-bash>`, :doc:`execution`
 
 ``sudo_prompt``
 ---------------

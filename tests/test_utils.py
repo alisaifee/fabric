@@ -2,16 +2,15 @@ from __future__ import with_statement
 
 import sys
 
-from fudge import Fake, patched_context, verify, clear_expectations
+from fudge import Fake, patched_context, with_fakes
 from fudge.patcher import with_patched_object
 from nose.tools import eq_
-from nose.tools import raises
 
 from fabric.state import output, env
 from fabric.utils import warn, indent, abort, puts, fastprint
 from fabric import utils  # For patching
 from fabric.context_managers import settings
-from utils import mock_streams
+from utils import mock_streams, aborts
 
 
 @mock_streams('stderr')
@@ -51,8 +50,7 @@ def test_indent_with_strip():
         del eq_.description
 
 
-@mock_streams('stderr')
-@raises(SystemExit)
+@aborts
 def test_abort():
     """
     abort() should raise SystemExit
@@ -117,7 +115,7 @@ def test_puts_without_prefix():
     puts(s, show_prefix=False)
     eq_(sys.stdout.getvalue(), "%s" % (s + "\n"))
 
-
+@with_fakes
 def test_fastprint_calls_puts():
     """
     fastprint() is just an alias to puts()
@@ -127,8 +125,4 @@ def test_fastprint_calls_puts():
         text=text, show_prefix=False, end="", flush=True
     )
     with patched_context(utils, 'puts', fake_puts):
-        try:
-            fastprint(text)
-            verify()
-        finally:
-            clear_expectations()
+        fastprint(text)

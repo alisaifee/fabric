@@ -5,8 +5,8 @@ import copy
 import getpass
 import sys
 
-import paramiko
-from nose.tools import with_setup, raises, ok_
+import ssh
+from nose.tools import with_setup, ok_
 from fudge import (Fake, clear_calls, clear_expectations, patch_object, verify,
     with_patched_object, patched_context, with_fakes)
 
@@ -159,7 +159,7 @@ class TestNetwork(FabricTest):
     @server()
     def test_saved_authentication_returns_client_object(self):
         cache = HostConnectionCache()
-        assert isinstance(cache[env.host_string], paramiko.SSHClient)
+        assert isinstance(cache[env.host_string], ssh.SSHClient)
 
     @server()
     @with_fakes
@@ -170,22 +170,38 @@ class TestNetwork(FabricTest):
             cache[env.host_string]
 
 
-    @raises(SystemExit)
-    @with_patched_object(output, 'aborts', False)
+    @aborts
     def test_aborts_on_prompt_with_abort_on_prompt(self):
+        """
+        abort_on_prompt=True should abort when prompt() is used
+        """
         env.abort_on_prompts = True
         prompt("This will abort")
 
 
     @server()
-    @raises(SystemExit)
-    @with_patched_object(output, 'aborts', False)
+    @aborts
     def test_aborts_on_password_prompt_with_abort_on_prompt(self):
+        """
+        abort_on_prompt=True should abort when password prompts occur
+        """
         env.password = None
         env.abort_on_prompts = True
         with password_response(PASSWORDS[env.user], times_called=1):
             cache = HostConnectionCache()
             cache[env.host_string]
+
+
+    @mock_streams('stdout')
+    @server()
+    def test_does_not_abort_with_password_and_host_with_abort_on_prompt(self):
+        """
+        abort_on_prompt=True should not abort if no prompts are needed
+        """
+        env.abort_on_prompts = True
+        env.password = PASSWORDS[env.user]
+        # env.host_string is automatically filled in when using server()
+        run("ls /simple")
 
 
     @mock_streams('stdout')

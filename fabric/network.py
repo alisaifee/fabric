@@ -2,6 +2,8 @@
 Classes and subroutines dealing with network connections and related topics.
 """
 
+from __future__ import with_statement
+
 from functools import wraps
 import getpass
 import re
@@ -16,10 +18,14 @@ from fabric.utils import abort, handle_prompt_abort
 try:
     import warnings
     warnings.simplefilter('ignore', DeprecationWarning)
-    import paramiko as ssh
-except ImportError:
-    abort("paramiko is a required module. Please install it:\n\t"
-          "$ sudo easy_install paramiko")
+    import ssh
+except ImportError, e:
+    print >> sys.stderr, """There was a problem importing our SSH library. Specifically:
+
+    %s
+
+Please make sure all dependencies are installed and importable.""" % e
+    sys.exit(1)
 
 
 host_pattern = r'((?P<user>.+)@)?(?P<host>[^:]+)(:(?P<port>\d+))?'
@@ -96,6 +102,16 @@ def normalize(host_string, omit_port=False):
     if omit_port:
         return user, host
     return user, host, port
+
+
+def to_dict(host_string):
+    user, host, port = normalize(host_string)
+    return {
+        'user': user, 'host': host, 'port': port, 'host_string': host_string
+    }
+
+def from_dict(arg):
+    return join_host_strings(arg['user'], arg['host'], arg['port'])
 
 
 def denormalize(host_string):
@@ -213,16 +229,16 @@ def connect(user, host, port):
             # Otherwise, assume an auth exception, and prompt for new/better
             # password.
 
-            # Paramiko doesn't handle prompting for locked private keys (i.e.
-            # keys with a passphrase and not loaded into an agent) so we have
-            # to detect this and tweak our prompt slightly.  (Otherwise,
-            # however, the logic flow is the same, because Paramiko's connect()
-            # method overrides the password argument to be either the login
-            # password OR the private key passphrase. Meh.)
+            # The 'ssh' library doesn't handle prompting for locked private
+            # keys (i.e.  keys with a passphrase and not loaded into an agent)
+            # so we have to detect this and tweak our prompt slightly.
+            # (Otherwise, however, the logic flow is the same, because
+            # ssh's connect() method overrides the password argument to be
+            # either the login password OR the private key passphrase. Meh.)
             #
             # NOTE: This will come up if you normally use a
             # passphrase-protected private key with ssh-agent, and enter an
-            # incorrect remote username, because Paramiko:
+            # incorrect remote username, because ssh.connect:
             # * Tries the agent first, which will fail as you gave the wrong
             # username, so obviously any loaded keys aren't gonna work for a
             # nonexistent remote account;
@@ -231,11 +247,11 @@ def connect(user, host, port):
             # because you didn't enter a password, because you're using
             # ssh-agent;
             # * In this condition (trying a key file, password is None)
-            # Paramiko raises PasswordRequiredException.
+            # ssh raises PasswordRequiredException.
             text = None
             if e.__class__ is ssh.PasswordRequiredException:
                 # NOTE: we can't easily say WHICH key's passphrase is needed,
-                # because Paramiko doesn't provide us with that info, and
+                # because ssh doesn't provide us with that info, and
                 # env.key_filename may be a list of keys, so we can't know
                 # which one raised the exception. Best not to try.
                 prompt = "[%s] Passphrase for private key"
@@ -316,35 +332,15 @@ def needs_host(func):
     command (in the case where multiple commands have no hosts set, of course.)
     """
     from fabric.state import env
-
     @wraps(func)
     def host_prompting_wrapper(*args, **kwargs):
-        handle_prompt_abort()
         while not env.get('host_string', False):
+            handle_prompt_abort()
             host_string = raw_input("No hosts found. Please specify (single)"
                                     " host string for connection: ")
-            interpret_host_string(host_string)
+            env.update(to_dict(host_string))
         return func(*args, **kwargs)
     return host_prompting_wrapper
-
-
-def interpret_host_string(host_string):
-    """
-    Apply given host string to the env dict.
-
-    Split it into hostname, username and port (using
-    `~fabric.network.normalize`) and store the full host string plus its
-    constituent parts into the appropriate env vars.
-
-    Returns the parts as split out by ``normalize`` for convenience.
-    """
-    from fabric.state import env
-    username, hostname, port = normalize(host_string)
-    env.host_string = host_string
-    env.host = hostname
-    env.user = username
-    env.port = port
-    return username, hostname, port
 
 
 def disconnect_all():
