@@ -5,23 +5,27 @@ This functionality is contained in its own module to prevent circular import
 problems with ``__init__.py`` (which is loaded by setup.py during installation,
 which in turn needs access to this version information.)
 """
-
 from subprocess import Popen, PIPE
 from os.path import abspath, dirname
 
 
-VERSION = (1, 4, 0, 'alpha', 0)
+VERSION = (1, 6, 0, 'final', 0)
 
 
 def git_sha():
     loc = abspath(dirname(__file__))
-    p = Popen(
-        "cd \"%s\" && git log -1 --format=format:%%h" % loc,
-        shell=True,
-        stdout=PIPE,
-        stderr=PIPE
-    )
-    return p.communicate()[0]
+    try:
+        p = Popen(
+            "cd \"%s\" && git log -1 --format=format:%%h" % loc,
+            shell=True,
+            stdout=PIPE,
+            stderr=PIPE
+        )
+        return p.communicate()[0]
+    # OSError occurs on Unix-derived platforms lacking Popen's configured shell
+    # default, /bin/sh. E.g. Android.
+    except OSError:
+        return None
 
 
 def get_version(form='short'):
@@ -39,6 +43,7 @@ def get_version(form='short'):
     * ``verbose``: like ``normal`` but fully explicit, e.g. "0.9 final". For
       tag commit messages, or anywhere that it's important to remove ambiguity
       between a branch and the first final release within that branch.
+    * ``all``: Returns all of the above, as a dict.
     """
     # Setup
     versions = {}
@@ -93,6 +98,11 @@ def get_version(form='short'):
     try:
         return versions[form]
     except KeyError:
+        if form == 'all':
+            return versions
         raise TypeError('"%s" is not a valid form specifier.' % form)
 
 __version__ = get_version('short')
+
+if __name__ == "__main__":
+    print(get_version('all'))

@@ -8,6 +8,29 @@ reading the rest of the documentation, especially the :ref:`usage docs
 <usage-docs>`, so please make sure you check those out if your question is not
 answered here.
 
+
+How do I dynamically set host lists?
+====================================
+
+See :ref:`dynamic-hosts`.
+
+
+.. _init-scripts-pty:
+
+Init scripts don't work!
+========================
+
+Init-style start/stop/restart scripts (e.g. ``/etc/init.d/apache2 start``)
+sometimes don't like Fabric's allocation of a pseudo-tty, which is active by
+default. In almost all cases, explicitly calling the command in question with
+``pty=False`` works correctly::
+
+    sudo("/etc/init.d/apache2 restart", pty=False)
+
+If you have no need for interactive behavior and run into this problem
+frequently, you may want to deactivate pty allocation globally by setting
+:ref:`env.always_use_pty <always-use-pty>` to ``False``.
+
 .. _one-shell-per-command:
 
 My (``cd``/``workon``/``export``/etc) calls don't seem to work!
@@ -40,7 +63,8 @@ without error) like so::
         run("cd /path/to/application && ./update.sh")
 
 Fabric provides a convenient shortcut for this specific use case, in fact:
-`~fabric.context_managers.cd`.
+`~fabric.context_managers.cd`. There is also `~fabric.context_managers.prefix`
+for arbitrary prefix commands.
 
 .. note::
     You might also get away with an absolute path and skip directory changing
@@ -51,6 +75,38 @@ Fabric provides a convenient shortcut for this specific use case, in fact:
 
     However, this requires that the command in question makes no assumptions
     about your current working directory!
+
+
+How do I use ``su`` to run commands as another user?
+====================================================
+
+This is a special case of :ref:`one-shell-per-command`. As that FAQ explains,
+commands like ``su`` which are 'stateful' do not work well in Fabric, so
+workarounds must be used.
+
+In the case of running commands as a user distinct from the login user, you
+have two options:
+
+#. Use `~fabric.operations.sudo` with its ``user=`` kwarg, e.g.
+   ``sudo("command", user="otheruser")``. If you want to factor the ``user``
+   part out of a bunch of commands, use `~fabric.context_managers.settings` to
+   set ``env.sudo_user``::
+
+       with settings(sudo_user="otheruser"):
+           sudo("command 1")
+           sudo("command 2")
+           ...
+
+#. If your target system cannot use ``sudo`` for some reason, you can still use
+   ``su``, but you need to invoke it in a non-interactive fashion by telling it
+   to run a specific command instead of opening a shell. Typically this is the
+   ``-c`` flag, e.g. ``su otheruser -c "command"``.
+
+   To run multiple commands in the same ``su -c`` "wrapper", you could e.g.
+   write a wrapper function around `~fabric.operations.run`::
+
+       def run_su(command, user="otheruser"):
+           return run('su %s -c "%s"' % (user, command))
 
 
 Why do I sometimes see ``err: stdin: is not a tty``?
@@ -92,11 +148,23 @@ still prevent the calling shell from exiting until they stop running, and this
 in turn prevents Fabric from continuing on with its own execution.
 
 The key to fixing this is to ensure that your process' standard pipes are all
-disassociated from the calling shell, which may be done in a number of ways:
+disassociated from the calling shell, which may be done in a number of ways
+(listed in order of robustness):
 
 * Use a pre-existing daemonization technique if one exists for the program at
   hand -- for example, calling an init script instead of directly invoking a
   server binary.
+
+    * Or leverage a process manager such as ``supervisord``, ``upstart`` or
+      ``systemd`` - such tools let you define what it means to "run" one of
+      your background processes, then issue init-script-like
+      start/stop/restart/status commands. They offer many advantages over
+      classic init scripts as well.
+
+* Use ``tmux``, ``screen`` or ``dtach`` to fully detach the process from the
+  running shell; these tools have the benefit of allowing you to reattach to
+  the process later on if needed (though they are more ad-hoc than
+  ``supervisord``-like tools).
 * Run the program under ``nohup`` and redirect stdin, stdout and stderr to
   ``/dev/null`` (or to your file of choice, if you need the output later)::
 
@@ -106,9 +174,6 @@ disassociated from the calling shell, which may be done in a number of ways:
   forever; ``>&``, ``<`` and ``&`` are Bash syntax for pipe redirection and
   backgrounding, respectively -- see your shell's man page for details.)
 
-* Use ``tmux``, ``screen`` or ``dtach`` to fully detach the process from the
-  running shell; these tools have the benefit of allowing you to reattach to
-  the process later on if needed (among many other such benefits).
 
 .. _faq-bash:
 

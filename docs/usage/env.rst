@@ -35,7 +35,7 @@ The `~fabric.context_managers.settings` context manager
 
 In many situations, it's useful to only temporarily modify ``env`` vars so that
 a given settings change only applies to a block of code. Fabric provides a
-`~fabric.context_managers.settings` context manager, which takes any numbr of
+`~fabric.context_managers.settings` context manager, which takes any number of
 key/value pairs and will use them to modify ``env`` within its wrapped block.
 
 For example, there are many situations where setting ``warn_only`` (see below)
@@ -121,6 +121,7 @@ when unforeseen circumstances arise.
 .. versionadded:: 1.1
 .. seealso:: :option:`--abort-on-prompts`
 
+
 ``all_hosts``
 -------------
 
@@ -181,6 +182,30 @@ executed by `~fabric.operations.run`/`~fabric.operations.sudo`.
 
 .. versionadded:: 1.0
 
+.. _command-timeout:
+
+``command_timeout``
+-------------------
+
+**Default:** ``None``
+
+Remote command timeout, in seconds.
+
+.. versionadded:: 1.6
+.. seealso:: :option:`--command-timeout`
+
+.. _connection-attempts:
+
+``connection_attempts``
+-----------------------
+
+**Default:** ``1``
+
+Number of times Fabric will attempt to connect when connecting to a new server. For backwards compatibility reasons, it defaults to only one connection attempt.
+
+.. versionadded:: 1.4
+.. seealso:: :option:`--connection-attempts`, :ref:`timeout`
+
 ``cwd``
 -------
 
@@ -188,6 +213,23 @@ executed by `~fabric.operations.run`/`~fabric.operations.sudo`.
 
 Current working directory. Used to keep state for the
 `~fabric.context_managers.cd` context manager.
+
+.. _dedupe_hosts:
+
+``dedupe_hosts``
+----------------
+
+**Default:** ``True``
+
+Deduplicate merged host lists so any given host string is only represented once
+(e.g. when using combinations of ``@hosts`` + ``@roles``, or ``-H`` and
+``-R``.)
+
+When set to ``False``, this option relaxes the deduplication, allowing users
+who explicitly want to run a task multiple times on the same host (say, in
+parallel, though it works fine serially too) to do so.
+
+.. versionadded:: 1.5
 
 .. _disable-known-hosts:
 
@@ -201,6 +243,25 @@ Useful for avoiding exceptions in situations where a "known host" changing its
 host key is actually valid (e.g. cloud servers such as EC2.)
 
 .. seealso:: :doc:`ssh`
+
+
+.. _eagerly-disconnect:
+
+``eagerly_disconnect``
+----------------------
+
+**Default:** ``False``
+
+If ``True``, causes ``fab`` to close connections after each individual task
+execution, instead of at the end of the run. This helps prevent a lot of
+typically-unused network sessions from piling up and causing problems with
+limits on per-process open files, or network hardware.
+
+.. note::
+    When active, this setting will result in the disconnect messages appearing
+    throughout your output, instead of at the end. This may be improved in
+    future releases.
+
 
 .. _exclude-hosts:
 
@@ -227,6 +288,24 @@ doesn't make sense to set this in a fabfile, but it may be specified in a
 
 .. seealso:: :doc:`fab`
 
+
+.. _gateway:
+
+``gateway``
+-----------
+
+**Default:** ``None``
+
+Enables SSH-driven gatewaying through the indicated host. The value should be a
+normal Fabric host string as used in e.g. :ref:`env.host_string <host_string>`.
+When this is set, newly created connections will be set to route their SSH
+traffic through the remote SSH daemon to the final destination.
+
+.. versionadded:: 1.5
+
+.. seealso:: :option:`--gateway <-g>`
+
+
 .. _host_string:
 
 ``host_string``
@@ -240,6 +319,21 @@ Defines the current user/host/port which Fabric will connect to when executing
 manually set when using Fabric as a library.
 
 .. seealso:: :doc:`execution`
+
+
+.. _forward-agent:
+
+``forward_agent``
+--------------------
+
+**Default:** ``False``
+
+If ``True``, enables forwarding of your local SSH agent to the remote end.
+
+.. versionadded:: 1.4
+
+.. seealso:: :option:`-A`
+
 
 ``host``
 --------
@@ -295,7 +389,9 @@ set/appended to with :option:`-i`.
 **Default:** ``False``
 
 Forces buffering by line instead of by character/byte, typically when running
-in parallel mode. May be activated via :option:`--linewise`.
+in parallel mode. May be activated via :option:`--linewise`. This option is
+implied by :ref:`env.parallel <env-parallel>` -- even if ``linewise`` is False,
+if ``parallel`` is True then linewise behavior will occur.
 
 .. seealso:: :ref:`linewise-output`
 
@@ -315,7 +411,7 @@ contain the same value.
 .. _no_agent:
 
 ``no_agent``
-------------------
+------------
 
 **Default:** ``False``
 
@@ -337,6 +433,19 @@ still be used, of course.)
 
 .. versionadded:: 0.9.1
 
+.. _env-parallel:
+
+``parallel``
+-------------------
+
+**Default:** ``False``
+
+When ``True``, forces all tasks to run in parallel. Implies :ref:`env.linewise
+<env-linewise>`.
+
+.. versionadded:: 1.3
+.. seealso:: :doc:`parallel`
+
 .. _password:
 
 ``password``
@@ -347,8 +456,7 @@ still be used, of course.)
 The default password used by the SSH layer when connecting to remote hosts,
 **and/or** when answering `~fabric.operations.sudo` prompts.
 
-.. seealso:: :ref:`passwords`
-.. seealso:: :ref:`password-management`
+.. seealso:: :ref:`env.passwords <passwords>`, :ref:`password-management`, :option:`--initial-password-prompt <-I>`
 
 .. _passwords:
 
@@ -373,10 +481,10 @@ per-host-string password cache. Keys are full :ref:`host strings
 
 **Default:** ``''``
 
-Used to set the remote ``$PATH`` when executing commands in
-`~fabric.operations.run`/`~fabric.operations.sudo`. It is recommended to use
-the `~fabric.context_managers.path` context manager for managing this value
-instead of setting it directly.
+Used to set the ``$PATH`` shell environment variable when executing commands in
+`~fabric.operations.run`/`~fabric.operations.sudo`/`~fabric.operations.local`.
+It is recommended to use the `~fabric.context_managers.path` context manager
+for managing this value instead of setting it directly.
 
 .. versionadded:: 1.0
 
@@ -393,6 +501,7 @@ Sets the number of concurrent processes to use when executing tasks in parallel.
 .. versionadded:: 1.3
 .. seealso:: :doc:`parallel`, :option:`-z`
 
+.. _port:
 
 ``port``
 --------
@@ -400,7 +509,9 @@ Sets the number of concurrent processes to use when executing tasks in parallel.
 **Default:** ``None``
 
 Set to the port part of ``env.host_string`` by ``fab`` when iterating over a
-host list. For informational purposes only.
+host list. May also be used to specify a default port.
+
+.. _real-fabfile:
 
 ``real_fabfile``
 ----------------
@@ -411,6 +522,27 @@ Set by ``fab`` with the path to the fabfile it has loaded up, if it got that
 far. For informational purposes only.
 
 .. seealso:: :doc:`fab`
+
+
+.. _remote-interrupt:
+
+``remote_interrupt``
+--------------------
+
+**Default:** ``None``
+
+Controls whether Ctrl-C triggers an interrupt remotely or is captured locally,
+as follows:
+
+* ``None`` (the default): only `~fabric.operations.open_shell` will exhibit
+  remote interrupt behavior, and
+  `~fabric.operations.run`/`~fabric.operations.sudo` will capture interrupts
+  locally.
+* ``False``: even `~fabric.operations.open_shell` captures locally.
+* ``True``: all functions will send the interrupt to the remote end.
+
+.. versionadded:: 1.6
+
 
 .. _rcfile:
 
@@ -435,6 +567,18 @@ listed in the user's known-hosts file.
 
 .. seealso:: :doc:`ssh`
 
+.. _system-known-hosts:
+
+``system_known_hosts``
+------------------------
+
+**Default:** ``None``
+
+If set, should be the path to a :file:`known_hosts` file.  The SSH layer will
+read this file before reading the user's known-hosts file.
+
+.. seealso:: :doc:`ssh`
+
 ``roledefs``
 ------------
 
@@ -455,18 +599,6 @@ The global role list used when composing per-task host lists.
 
 .. seealso:: :doc:`execution`
 
-.. _env-parallel:
-
-``parallel``
--------------------
-
-**Default:** ``False``
-
-When ``True``, forces all tasks to run in parallel.
-
-.. versionadded:: 1.3
-.. seealso:: :doc:`parallel`
-
 .. _shell:
 
 ``shell``
@@ -481,16 +613,110 @@ takes a command string as its value.
 
 .. seealso:: :ref:`FAQ on bash as default shell <faq-bash>`, :doc:`execution`
 
+.. _skip-bad-hosts:
+
+``skip_bad_hosts``
+------------------
+
+**Default:** ``False``
+
+If ``True``, causes ``fab`` (or non-``fab`` use of `~fabric.tasks.execute`) to skip over hosts it can't connect to.
+
+.. versionadded:: 1.4
+.. seealso::
+    :option:`--skip-bad-hosts`, :ref:`excluding-hosts`, :doc:`execution`
+
+
+.. _ssh-config-path:
+
+``ssh_config_path``
+-------------------
+
+**Default:** ``$HOME/.ssh/config``
+
+Allows specification of an alternate SSH configuration file path.
+
+.. versionadded:: 1.4
+.. seealso:: :option:`--ssh-config-path`, :ref:`ssh-config`
+
+``ok_ret_codes``
+------------------------
+
+**Default:** ``[0]``
+
+Return codes in this list are used to determine whether calls to
+`~fabric.operations.run`/`~fabric.operations.sudo`/`~fabric.operations.sudo`
+are considered successful.
+
+.. versionadded:: 1.6
+
+.. _sudo_prefix:
+
+``sudo_prefix``
+---------------
+
+**Default:** ``"sudo -S -p '%(sudo_prompt)s' " % env``
+
+The actual ``sudo`` command prefixed onto `~fabric.operations.sudo` calls'
+command strings. Users who do not have ``sudo`` on their default remote
+``$PATH``, or who need to make other changes (such as removing the ``-p`` when
+passwordless sudo is in effect) may find changing this useful.
+
+.. seealso::
+
+    The `~fabric.operations.sudo` operation; :ref:`env.sudo_prompt
+    <sudo_prompt>`
+
+.. _sudo_prompt:
+
 ``sudo_prompt``
 ---------------
 
-**Default:** ``sudo password:``
+**Default:** ``"sudo password:"``
 
 Passed to the ``sudo`` program on remote systems so that Fabric may correctly
-identify its password prompt. This may be modified by fabfiles but there's no
-real reason to.
+identify its password prompt.
 
-.. seealso:: The `~fabric.operations.sudo` operation
+.. seealso::
+
+    The `~fabric.operations.sudo` operation; :ref:`env.sudo_prefix
+    <sudo_prefix>`
+
+.. _sudo_user:
+
+``sudo_user``
+-------------
+
+**Default:** ``None``
+
+Used as a fallback value for `~fabric.operations.sudo`'s ``user`` argument if
+none is given. Useful in combination with `~fabric.context_managers.settings`.
+
+.. seealso:: `~fabric.operations.sudo`
+
+.. _env-tasks:
+
+``tasks``
+-------------
+
+**Default:** ``[]``
+
+Set by ``fab`` to the full tasks list to be executed for the currently
+executing command. For informational purposes only.
+
+.. seealso:: :doc:`execution`
+
+.. _timeout:
+
+``timeout``
+-----------
+
+**Default:** ``10``
+
+Network connection timeout, in seconds.
+
+.. versionadded:: 1.4
+.. seealso:: :option:`--timeout`, :ref:`connection-attempts`
 
 ``use_shell``
 -------------
@@ -500,6 +726,20 @@ real reason to.
 Global setting which acts like the ``use_shell`` argument to
 `~fabric.operations.run`/`~fabric.operations.sudo`: if it is set to ``False``,
 operations will not wrap executed commands in ``env.shell``.
+
+
+.. _use-ssh-config:
+
+``use_ssh_config``
+------------------
+
+**Default:** ``False``
+
+Set to ``True`` to cause Fabric to load your local SSH config file.
+
+.. versionadded:: 1.4
+.. seealso:: :ref:`ssh-config`
+
 
 .. _user:
 

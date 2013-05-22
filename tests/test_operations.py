@@ -11,14 +11,15 @@ import unittest
 import random
 import types
 
-from nose.tools import raises, eq_
+from nose.tools import raises, eq_, ok_
 from fudge import with_patched_object
 
 from fabric.state import env, output
 from fabric.operations import require, prompt, _sudo_prefix, _shell_wrap, \
     _shell_escape
-from fabric.api import get, put, hide, show, cd, lcd, local, run, sudo
+from fabric.api import get, put, hide, show, cd, lcd, local, run, sudo, quiet
 from fabric.sftp import SFTP
+from fabric.exceptions import CommandTimeout
 
 from fabric.decorators import with_settings
 from utils import *
@@ -104,16 +105,74 @@ def test_require_noniterable_provided_by_key():
     require('foo', provided_by=fake_providing_function)
 
 
+@aborts
+def test_require_key_exists_empty_list():
+    """
+    When given a single existing key but the value is an empty list, require()
+    aborts
+    """
+    # 'hosts' is one of the default values, so we know it'll be there
+    require('hosts')
+
+
+@aborts
+@with_settings(foo={})
+def test_require_key_exists_empty_dict():
+    """
+    When given a single existing key but the value is an empty dict, require()
+    aborts
+    """
+    require('foo')
+
+
+@aborts
+@with_settings(foo=())
+def test_require_key_exists_empty_tuple():
+    """
+    When given a single existing key but the value is an empty tuple, require()
+    aborts
+    """
+    require('foo')
+
+
+@aborts
+@with_settings(foo=set())
+def test_require_key_exists_empty_set():
+    """
+    When given a single existing key but the value is an empty set, require()
+    aborts
+    """
+    require('foo')
+
+
+@with_settings(foo=0, bar=False)
+def test_require_key_exists_false_primitive_values():
+    """
+    When given keys that exist with primitive values that evaluate to False,
+    require() throws no exception
+    """
+    require('foo', 'bar')
+
+
+@with_settings(foo=['foo'], bar={'bar': 'bar'}, baz=('baz',), qux=set('qux'))
+def test_require_complex_non_empty_values():
+    """
+    When given keys that exist with non-primitive values that are not empty,
+    require() throws no exception
+    """
+    require('foo', 'bar', 'baz', 'qux')
+
+
 #
 # prompt()
 #
 
 def p(x):
-    print x,
+    sys.stdout.write(x)
 
 
 @mock_streams('stdout')
-@with_patched_object(sys.modules['__builtin__'], 'raw_input', p)
+@with_patched_input(p)
 def test_prompt_appends_space():
     """
     prompt() appends a single space when no default is given
@@ -124,7 +183,7 @@ def test_prompt_appends_space():
 
 
 @mock_streams('stdout')
-@with_patched_object(sys.modules['__builtin__'], 'raw_input', p)
+@with_patched_input(p)
 def test_prompt_with_default():
     """
     prompt() appends given default value plus one space on either side
@@ -144,8 +203,8 @@ def test_sudo_prefix_with_user():
     _sudo_prefix() returns prefix plus -u flag for nonempty user
     """
     eq_(
-        _sudo_prefix(user="foo"),
-        "%s -u \"foo\" " % (env.sudo_prefix % env.sudo_prompt)
+        _sudo_prefix(user="foo", group=None),
+        "%s -u \"foo\" " % (env.sudo_prefix % env)
     )
 
 
@@ -153,7 +212,27 @@ def test_sudo_prefix_without_user():
     """
     _sudo_prefix() returns standard prefix when user is empty
     """
-    eq_(_sudo_prefix(user=None), env.sudo_prefix % env.sudo_prompt)
+    eq_(_sudo_prefix(user=None, group=None), env.sudo_prefix % env)
+
+
+def test_sudo_prefix_with_group():
+    """
+    _sudo_prefix() returns prefix plus -g flag for nonempty group
+    """
+    eq_(
+        _sudo_prefix(user=None, group="foo"),
+        "%s -g \"foo\" " % (env.sudo_prefix % env)
+    )
+
+
+def test_sudo_prefix_with_user_and_group():
+    """
+    _sudo_prefix() returns prefix plus -u and -g for nonempty user and group
+    """
+    eq_(
+        _sudo_prefix(user="foo", group="bar"),
+        "%s -u \"foo\" -g \"bar\" " % (env.sudo_prefix % env)
+    )
 
 
 @with_settings(use_shell=True)
@@ -162,16 +241,16 @@ def test_shell_wrap():
     command = "command"
     for description, shell, sudo_prefix, result in (
         ("shell=True, sudo_prefix=None",
-            True, None, "%s \"%s\"" % (env.shell, command)),
+            True, None, '%s "%s"' % (env.shell, command)),
         ("shell=True, sudo_prefix=string",
-            True, prefix, prefix + " %s \"%s\"" % (env.shell, command)),
+            True, prefix, prefix + ' %s "%s"' % (env.shell, command)),
         ("shell=False, sudo_prefix=None",
             False, None, command),
         ("shell=False, sudo_prefix=string",
             False, prefix, prefix + " " + command),
     ):
         eq_.description = "_shell_wrap: %s" % description
-        yield eq_, _shell_wrap(command, shell, sudo_prefix), result
+        yield eq_, _shell_wrap(command, shell_escape=True, shell=shell, sudo_prefix=sudo_prefix), result
         del eq_.description
 
 
@@ -182,8 +261,20 @@ def test_shell_wrap_escapes_command_if_shell_is_true():
     """
     cmd = "cd \"Application Support\""
     eq_(
-        _shell_wrap(cmd, shell=True),
+        _shell_wrap(cmd, shell_escape=True, shell=True),
         '%s "%s"' % (env.shell, _shell_escape(cmd))
+    )
+
+
+@with_settings(use_shell=True)
+def test_shell_wrap_does_not_escape_command_if_shell_is_true_and_shell_escape_is_false():
+    """
+    _shell_wrap() does no escaping if shell=True and shell_escape=False
+    """
+    cmd = "cd \"Application Support\""
+    eq_(
+        _shell_wrap(cmd, shell_escape=False, shell=True),
+        '%s "%s"' % (env.shell, cmd)
     )
 
 
@@ -192,7 +283,7 @@ def test_shell_wrap_does_not_escape_command_if_shell_is_false():
     _shell_wrap() does no escaping if shell=False
     """
     cmd = "cd \"Application Support\""
-    eq_(_shell_wrap(cmd, shell=False), cmd)
+    eq_(_shell_wrap(cmd, shell_escape=True, shell=False), cmd)
 
 
 def test_shell_escape_escapes_doublequotes():
@@ -264,6 +355,69 @@ class TestCombineStderr(FabricTest):
         r = run("both_streams", combine_stderr=False)
         eq_("stdout", r.stdout)
         eq_("stderr", r.stderr)
+
+
+class TestQuietAndWarnKwargs(FabricTest):
+    @server(responses={'wat': ["", "", 1]})
+    def test_quiet_implies_warn_only(self):
+        # Would raise an exception if warn_only was False
+        eq_(run("wat", quiet=True).failed, True)
+
+    @server()
+    @mock_streams('both')
+    def test_quiet_implies_hide_everything(self):
+        run("ls /", quiet=True)
+        eq_(sys.stdout.getvalue(), "")
+        eq_(sys.stderr.getvalue(), "")
+
+    @server(responses={'hrm': ["", "", 1]})
+    @mock_streams('both')
+    def test_warn_only_is_same_as_settings_warn_only(self):
+        eq_(run("hrm", warn_only=True).failed, True)
+
+    @server()
+    @mock_streams('both')
+    def test_warn_only_does_not_imply_hide_everything(self):
+        run("ls /simple", warn_only=True)
+        assert sys.stdout.getvalue() != ""
+
+
+class TestMultipleOKReturnCodes(FabricTest):
+    @server(responses={'no srsly its ok': ['', '', 1]})
+    def test_expand_to_include_1(self):
+        with settings(quiet(), ok_ret_codes=[0, 1]):
+            eq_(run("no srsly its ok").succeeded, True)
+
+
+slow_server = server(responses={'slow': ['', '', 0, 3]})
+slow = lambda x: slow_server(raises(CommandTimeout)(x))
+
+class TestRun(FabricTest):
+    """
+    @server-using generic run()/sudo() tests
+    """
+    @slow
+    def test_command_timeout_via_env_var(self):
+        env.command_timeout = 2 # timeout after 2 seconds
+        with hide('everything'):
+            run("slow")
+
+    @slow
+    def test_command_timeout_via_kwarg(self):
+        with hide('everything'):
+            run("slow", timeout=2)
+
+    @slow
+    def test_command_timeout_via_env_var_in_sudo(self):
+        env.command_timeout = 2 # timeout after 2 seconds
+        with hide('everything'):
+            sudo("slow")
+
+    @slow
+    def test_command_timeout_via_kwarg_of_sudo(self):
+        with hide('everything'):
+            sudo("slow", timeout=2)
+
 
 #
 # get() and put()
@@ -683,6 +837,34 @@ class TestFileTransfers(FabricTest):
         eq_(["<StringIO>"], retval.failed)
         assert not retval.succeeded
 
+    @server()
+    def test_put_sends_all_files_with_glob(self):
+        """
+        put() should send all items that match a glob.
+        """
+        paths = ['foo1.txt', 'foo2.txt']
+        glob = 'foo*.txt'
+        remote_directory = '/'
+        for path in paths:
+            self.mkfile(path, 'foo!')
+
+        with hide('everything'):
+            retval = put(self.path(glob), remote_directory)
+        eq_(sorted(retval), sorted([remote_directory + path for path in paths]))
+
+    @server()
+    def test_put_sends_correct_file_with_globbing_off(self):
+        """
+        put() should send a file with a glob pattern in the path, when globbing disabled.
+        """
+        text = "globbed!"
+        local = self.mkfile('foo[bar].txt', text)
+        local2 = self.path('foo2.txt')
+        with hide('everything'):
+            put(local, '/', use_glob=False)
+            get('/foo[bar].txt', local2)
+        eq_contents(local2, text)
+
     #
     # Interactions with cd()
     #
@@ -759,6 +941,22 @@ class TestFileTransfers(FabricTest):
             get(f, f)
         assert self.exists_locally(os.path.join(d, f))
 
+    @server()
+    @mock_streams('stdout')
+    def test_stringio_without_name(self):
+        file_obj = StringIO(u'test data')
+        put(file_obj, '/')
+        assert re.search('<file obj>', sys.stdout.getvalue())
+
+    @server()
+    @mock_streams('stdout')
+    def test_stringio_with_name(self):
+        """If a file object (StringIO) has a name attribute, use that in output"""
+        file_obj = StringIO(u'test data')
+        file_obj.name = 'Test StringIO Object'
+        put(file_obj, '/')
+        assert re.search(file_obj.name, sys.stdout.getvalue())
+
 
 #
 # local()
@@ -788,3 +986,27 @@ def test_local_output_and_capture():
                     local.description = d
                     yield local, "echo 'foo' >/dev/null", capture
                     del local.description
+
+
+class TestRunSudoReturnValues(FabricTest):
+    @server()
+    def test_returns_command_given(self):
+        """
+        run("foo").command == foo
+        """
+        with hide('everything'):
+            eq_(run("ls /").command, "ls /")
+
+    @server()
+    def test_returns_fully_wrapped_command(self):
+        """
+        run("foo").real_command involves env.shell + etc
+        """
+        # FabTest turns use_shell off, we must reactivate it.
+        # Doing so will cause a failure: server's default command list assumes
+        # it's off, we're not testing actual wrapping here so we don't really
+        # care. Just warn_only it.
+        with settings(hide('everything'), warn_only=True, use_shell=True):
+            # Slightly flexible test, we're not testing the actual construction
+            # here, just that this attribute exists.
+            ok_(env.shell in run("ls /").real_command)

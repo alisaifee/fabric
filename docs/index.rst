@@ -5,7 +5,7 @@ Fabric
 About
 =====
 
-.. include:: ../README
+.. include:: ../README.rst
 
 
 Installation
@@ -23,6 +23,12 @@ and the development version.
 However, if you want to live on the edge, you can pull down the source code
 from our Git repository, or fork us on Github. The :doc:`installation` page has
 details for how to access the source code.
+
+.. warning::
+
+    If you install Fabric from Git, you will need to install its dependency
+    Paramiko from Git as well. See :doc:`the installation docs <installation>`
+    for details.
 
 
 Development
@@ -81,7 +87,7 @@ documentation, which expands upon the concepts outlined in the
 :doc:`tutorial` and also covers advanced topics.
 
 .. toctree::
-    :maxdepth: 1
+    :maxdepth: 2
     :glob:
 
     usage/*
@@ -190,12 +196,3 @@ We maintain a semi-official IRC channel at ``#fabric`` on Freenode
 (``irc://irc.freenode.net``) where the developers and other users may be found.
 As always with IRC, we can't promise immediate responses, but some folks keep
 logs of the channel and will try to get back to you when they can.
-
-Wiki
-----
-
-There is an official Fabric `MoinMoin <http://moinmo.in>`_ wiki reachable at
-`wiki.fabfile.org <http://wiki.fabfile.org>`_, although as of this writing its
-usage patterns are still being worked out. Like the ticket tracker, spam has
-forced us to put anti-spam measures up: the wiki has a simple, easy captcha in
-place on the edit form.

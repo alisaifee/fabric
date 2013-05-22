@@ -1,6 +1,7 @@
 from __future__ import with_statement
 
 import random
+import sys
 
 from nose.tools import eq_, ok_, assert_true, assert_false, assert_equal
 import fudge
@@ -9,7 +10,10 @@ from fudge import Fake, with_fakes, patched_context
 from fabric import decorators, tasks
 from fabric.state import env
 import fabric # for patching fabric.state.xxx
-from fabric.tasks import _parallel_tasks, requires_parallel
+from fabric.tasks import _parallel_tasks, requires_parallel, execute
+from fabric.context_managers import lcd, settings, hide
+
+from utils import mock_streams
 
 
 #
@@ -211,6 +215,20 @@ def test_parallel_wins_vs_serial():
     ok_(requires_parallel(serial2))
     ok_(requires_parallel(serial3))
 
+@mock_streams('stdout')
+def test_global_parallel_honors_runs_once():
+    """
+    fab -P (or env.parallel) should honor @runs_once
+    """
+    @decorators.runs_once
+    def mytask():
+        print("yolo") # 'Carpe diem' for stupid people!
+    with settings(hide('everything'), parallel=True):
+        execute(mytask, hosts=['localhost', '127.0.0.1'])
+    result = sys.stdout.getvalue()
+    eq_(result, "yolo\n")
+    assert result != "yolo\nyolo\n"
+
 
 #
 # @roles
@@ -252,3 +270,24 @@ def test_with_settings_passes_env_vars_into_decorated_function():
     decorated_task = decorators.with_settings(value=random_return)(some_task)
     ok_(some_task(), msg="sanity check")
     eq_(random_return, decorated_task())
+
+def test_with_settings_with_other_context_managers():
+    """
+    with_settings() should take other context managers, and use them with other
+    overrided key/value pairs.
+    """
+    env.testval1 = "outer 1"
+    prev_lcwd = env.lcwd
+
+    def some_task():
+        eq_(env.testval1, "inner 1")
+        ok_(env.lcwd.endswith("here")) # Should be the side-effect of adding cd to settings
+
+    decorated_task = decorators.with_settings(
+        lcd("here"),
+        testval1="inner 1"
+    )(some_task)
+    decorated_task()
+
+    ok_(env.testval1, "outer 1")
+    eq_(env.lcwd, prev_lcwd)

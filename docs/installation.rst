@@ -5,10 +5,31 @@ Installation
 Fabric is best installed via `pip <http://pip.openplans.org>`_ (highly
 recommended) or `easy_install
 <http://wiki.python.org/moin/CheeseShopTutorial>`_ (older, but still works
-fine). You may also opt to use your operating system's package manager (the
-package is typically called ``fabric`` or ``python-fabric``), or execute ``pip
-install -e .`` (or ``python setup.py install``) inside a :ref:`downloaded
-<downloads>` or :ref:`cloned <source-code-checkouts>` copy of the source code.
+fine), e.g.::
+
+    $ pip install fabric
+
+You may also opt to use your operating system's package manager; the package is
+typically called ``fabric`` or ``python-fabric``. E.g.::
+
+    $ sudo apt-get install fabric
+
+Advanced users wanting to install a development version may use ``pip`` to grab
+the latest master branch (as well as the dev version of the Paramiko
+dependency)::
+
+    $ pip install paramiko==dev
+    $ pip install fabric==dev
+
+Or, to install an editable version for debugging/hacking, execute ``pip install
+-e .`` (or ``python setup.py install``) inside a :ref:`downloaded <downloads>`
+or :ref:`cloned <source-code-checkouts>` copy of the source code.
+
+.. warning::
+
+    Any development installs of Fabric (whether via ``==dev`` or ``install
+    -e``) require the development version of Paramiko to be installed
+    beforehand, or Fabric's installation may fail.
 
 
 Dependencies
@@ -18,8 +39,8 @@ In order for Fabric's installation to succeed, you will need four primary pieces
 
 * the Python programming language;
 * the ``setuptools`` packaging/installation library;
-* the Python ``ssh`` SSH2 library;
-* and ``ssh``'s dependency, the PyCrypto cryptography library.
+* the Python ``paramiko`` SSH2 library;
+* and ``paramiko``'s dependency, the PyCrypto cryptography library.
 
 and, if using the :doc:`parallel execution mode </usage/parallel>`:
 
@@ -148,7 +169,7 @@ packages:
 
 * `git <http://git-scm.com>`_ and `Mercurial`_, in order to obtain some of the
   other dependencies below;
-* `Nose <http://code.google.com/p/python-nose/>`_
+* `Nose <https://github.com/nose-devs/nose>`_
 * `Coverage <http://nedbatchelder.com/code/modules/coverage.html>`_
 * `PyLint <http://www.logilab.org/857>`_
 * `Fudge <http://farmdev.com/projects/fudge/index.html>`_
@@ -168,20 +189,9 @@ Downloads
 =========
 
 To obtain a tar.gz or zip archive of the Fabric source code, you may visit
-either of the following locations:
-
-* The official downloads are located on `our Github account's Downloads page
-  <https://github.com/fabric/fabric/downloads>`_. This is the spot you want to
-  download from for operating system packages, as the only changing part of the
-  URL will be the filename itself and the md5 hashes will be consistent.
-* Our `Git repository viewer <http://git.fabfile.org>`_ provides downloads of
-  all tagged releases. See the "Download" column, next to the "Tag" column in
-  the middle of the front page. Please note that due to how cgit generates tag
-  archives, the md5 sums will change over time, so use of this location for
-  package downloads is not recommended.
-* `Fabric's PyPI page <http://pypi.python.org/pypi/Fabric>`_ offers manual
-  downloads in addition to being the entry point for ``pip`` and
-  ``easy-install``.
+`Fabric's PyPI page <http://pypi.python.org/pypi/Fabric>`_, which offers manual
+downloads in addition to being the entry point for ``pip`` and
+``easy-install``.
 
 
 .. _source-code-checkouts:
@@ -193,14 +203,12 @@ The Fabric developers manage the project's source code with the `Git
 <http://git-scm.com>`_ DVCS. To follow Fabric's development via Git instead of
 downloading official releases, you have the following options:
 
-* Clone the canonical Git repository, ``git://fabfile.org/fabric.git`` (note
-  that a Web view of this repository can be found at `git.fabfile.org
-  <http://git.fabfile.org>`_)
-* Clone the official Github mirror/collaboration repository,
+* Clone the canonical repository straight from `the Fabric organization's
+  repository on Github <https://github.com/fabric/fabric>`_,
   ``git://github.com/fabric/fabric.git``
 * Make your own fork of the Github repository by making a Github account,
-  visiting `GitHub/fabric/fabric <http://github.com/fabric/fabric>`_
-  and clicking the "fork" button.
+  visiting `fabric/fabric <http://github.com/fabric/fabric>`_ and clicking the
+  "fork" button.
 
 .. note::
 
@@ -228,11 +236,11 @@ installation of Fabric via ``pypm``::
 
     C:\> pypm install fabric
     The following packages will be installed into "%APPDATA%\Python" (2.7):
-     ssh-1.7.8 pycrypto-2.4 fabric-1.3.0
+     paramiko-1.7.8 pycrypto-2.4 fabric-1.3.0
     Get: [pypm-free.activestate.com] fabric 1.3.0
-    Get: [pypm-free.activestate.com] ssh 1.7.8
+    Get: [pypm-free.activestate.com] paramiko 1.7.8
     Get: [pypm-free.activestate.com] pycrypto 2.4
-    Installing ssh-1.7.8
+    Installing paramiko-1.7.8
     Installing pycrypto-2.4
     Installing fabric-1.3.0
     Fixing script %APPDATA%\Python\Scripts\fab-script.py

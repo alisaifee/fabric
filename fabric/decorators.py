@@ -3,7 +3,9 @@ Convenience decorators for use in fabfiles.
 """
 from __future__ import with_statement
 
+import types
 from functools import wraps
+
 from Crypto import Random
 
 from fabric import tasks
@@ -23,6 +25,10 @@ def task(*args, **kwargs):
     .. versionchanged:: 1.2
         Added the ``alias``, ``aliases``, ``task_class`` and ``default``
         keyword arguments. See :ref:`task-decorator-arguments` for details.
+    .. versionchanged:: 1.5
+        Added the ``name`` keyword argument.
+
+    .. seealso:: `~fabric.docs.unwrap_tasks`, `~fabric.tasks.WrappedCallableTask`
     """
     invoked = bool(not args or kwargs)
     task_class = kwargs.pop("task_class", tasks.WrappedCallableTask)
@@ -33,6 +39,28 @@ def task(*args, **kwargs):
         return task_class(func, *args, **kwargs)
 
     return wrapper if invoked else wrapper(func)
+
+def _wrap_as_new(original, new):
+    if isinstance(original, tasks.Task):
+        return tasks.WrappedCallableTask(new)
+    return new
+
+
+def _list_annotating_decorator(attribute, *values):
+    def attach_list(func):
+        @wraps(func)
+        def inner_decorator(*args, **kwargs):
+            return func(*args, **kwargs)
+        _values = values
+        # Allow for single iterable argument as well as *args
+        if len(_values) == 1 and not isinstance(_values[0], basestring):
+            _values = _values[0]
+        setattr(inner_decorator, attribute, list(_values))
+        # Don't replace @task new-style task objects with inner_decorator by
+        # itself -- wrap in a new Task object first.
+        inner_decorator = _wrap_as_new(func, inner_decorator)
+        return inner_decorator
+    return attach_list
 
 
 def hosts(*host_list):
@@ -58,18 +86,7 @@ def hosts(*host_list):
         Allow a single, iterable argument (``@hosts(iterable)``) to be used
         instead of requiring ``@hosts(*iterable)``.
     """
-
-    def attach_hosts(func):
-        @wraps(func)
-        def inner_decorator(*args, **kwargs):
-            return func(*args, **kwargs)
-        _hosts = host_list
-        # Allow for single iterable argument as well as *args
-        if len(_hosts) == 1 and not isinstance(_hosts[0], basestring):
-            _hosts = _hosts[0]
-        inner_decorator.hosts = list(_hosts)
-        return inner_decorator
-    return attach_hosts
+    return _list_annotating_decorator('hosts', *host_list)
 
 
 def roles(*role_list):
@@ -99,17 +116,7 @@ def roles(*role_list):
         Allow a single, iterable argument to be used (same as
         `~fabric.decorators.hosts`).
     """
-    def attach_roles(func):
-        @wraps(func)
-        def inner_decorator(*args, **kwargs):
-            return func(*args, **kwargs)
-        _roles = role_list
-        # Allow for single iterable argument as well as *args
-        if len(_roles) == 1 and not isinstance(_roles[0], basestring):
-            _roles = _roles[0]
-        inner_decorator.roles = list(_roles)
-        return inner_decorator
-    return attach_roles
+    return _list_annotating_decorator('roles', *role_list)
 
 
 def runs_once(func):
@@ -123,19 +130,15 @@ def runs_once(func):
     Any function wrapped with this decorator will silently fail to execute the
     2nd, 3rd, ..., Nth time it is called, and will return the value of the
     original run.
-
-    .. warning::
-        This decorator is not compatible with Fabric's :doc:`parallel execution
-        mode </usage/parallel>`; when used alongside
-        `~fabric.decorators.parallel` or :option:`-P`, or when decorating
-        subtasks of parallel tasks, each parallel copy of the decorated task
-        will itself run one time, resulting in multiple runs.
+    
+    .. note:: ``runs_once`` does not work with parallel task execution.
     """
     @wraps(func)
     def decorated(*args, **kwargs):
         if not hasattr(decorated, 'return_value'):
             decorated.return_value = func(*args, **kwargs)
         return decorated.return_value
+    decorated = _wrap_as_new(func, decorated)
     # Mark as serial (disables parallelism) and return
     return serial(decorated)
 
@@ -153,7 +156,7 @@ def serial(func):
     """
     if not getattr(func, 'parallel', False):
         func.serial = True
-    return func
+    return _wrap_as_new(func, func)
 
 
 def parallel(pool_size=None):
@@ -166,27 +169,29 @@ def parallel(pool_size=None):
 
     .. versionadded:: 1.3
     """
+    called_without_args = type(pool_size) == types.FunctionType
+
     def real_decorator(func):
         @wraps(func)
         def inner(*args, **kwargs):
             # Required for ssh/PyCrypto to be happy in multiprocessing
             # (as far as we can tell, this is needed even with the extra such
-            # calls in newer versions of the 'ssh' library.)
+            # calls in newer versions of paramiko.)
             Random.atfork()
             return func(*args, **kwargs)
         inner.parallel = True
         inner.serial = False
-        inner.pool_size = pool_size
-        return inner
+        inner.pool_size = None if called_without_args else pool_size
+        return _wrap_as_new(func, inner)
 
     # Allow non-factory-style decorator use (@decorator vs @decorator())
-    if type(pool_size) == type(real_decorator):
+    if called_without_args:
         return real_decorator(pool_size)
 
     return real_decorator
 
 
-def with_settings(**kw_settings):
+def with_settings(*arg_settings, **kw_settings):
     """
     Decorator equivalent of ``fabric.context_managers.settings``.
 
@@ -205,8 +210,9 @@ def with_settings(**kw_settings):
     .. versionadded:: 1.1
     """
     def outer(func):
+        @wraps(func)
         def inner(*args, **kwargs):
-            with settings(**kw_settings):
+            with settings(*arg_settings, **kw_settings):
                 return func(*args, **kwargs)
-        return inner
+        return _wrap_as_new(func, inner)
     return outer

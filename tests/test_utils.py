@@ -1,16 +1,17 @@
 from __future__ import with_statement
 
 import sys
+from unittest import TestCase
 
 from fudge import Fake, patched_context, with_fakes
 from fudge.patcher import with_patched_object
 from nose.tools import eq_
 
 from fabric.state import output, env
-from fabric.utils import warn, indent, abort, puts, fastprint
+from fabric.utils import warn, indent, abort, puts, fastprint, error, RingBuffer
 from fabric import utils  # For patching
-from fabric.context_managers import settings
-from utils import mock_streams, aborts
+from fabric.context_managers import settings, hide
+from utils import mock_streams, aborts, FabricTest, assert_contains
 
 
 @mock_streams('stderr')
@@ -20,7 +21,7 @@ def test_warn():
     warn() should print 'Warning' plus given text
     """
     warn("Test")
-    assert "\nWarning: Test\n\n" == sys.stderr.getvalue()
+    eq_("\nWarning: Test\n\n", sys.stderr.getvalue())
 
 
 def test_indent():
@@ -126,3 +127,83 @@ def test_fastprint_calls_puts():
     )
     with patched_context(utils, 'puts', fake_puts):
         fastprint(text)
+
+
+class TestErrorHandling(FabricTest):
+    @with_patched_object(utils, 'warn', Fake('warn', callable=True,
+        expect_call=True))
+    def test_error_warns_if_warn_only_True_and_func_None(self):
+        """
+        warn_only=True, error(func=None) => calls warn()
+        """
+        with settings(warn_only=True):
+            error('foo')
+
+    @with_patched_object(utils, 'abort', Fake('abort', callable=True,
+        expect_call=True))
+    def test_error_aborts_if_warn_only_False_and_func_None(self):
+        """
+        warn_only=False, error(func=None) => calls abort()
+        """
+        with settings(warn_only=False):
+            error('foo')
+
+    def test_error_calls_given_func_if_func_not_None(self):
+        """
+        error(func=callable) => calls callable()
+        """
+        error('foo', func=Fake(callable=True, expect_call=True))
+
+    @mock_streams('stdout')
+    @with_patched_object(utils, 'abort', Fake('abort', callable=True,
+        expect_call=True).calls(lambda x: sys.stdout.write(x + "\n")))
+    def test_error_includes_stdout_if_given_and_hidden(self):
+        """
+        error() correctly prints stdout if it was previously hidden
+        """
+        # Mostly to catch regression bug(s)
+        stdout = "this is my stdout"
+        with hide('stdout'):
+            error("error message", func=utils.abort, stdout=stdout)
+        assert_contains(stdout, sys.stdout.getvalue())
+
+    @mock_streams('stderr')
+    @with_patched_object(utils, 'abort', Fake('abort', callable=True,
+        expect_call=True).calls(lambda x: sys.stderr.write(x + "\n")))
+    def test_error_includes_stderr_if_given_and_hidden(self):
+        """
+        error() correctly prints stderr if it was previously hidden
+        """
+        # Mostly to catch regression bug(s)
+        stderr = "this is my stderr"
+        with hide('stderr'):
+            error("error message", func=utils.abort, stderr=stderr)
+        assert_contains(stderr, sys.stderr.getvalue())
+
+
+class TestRingBuffer(TestCase):
+    def setUp(self):
+        self.b = RingBuffer([], maxlen=5)
+
+    def test_append_empty(self):
+        self.b.append('x')
+        eq_(self.b, ['x'])
+
+    def test_append_full(self):
+        self.b.extend("abcde")
+        self.b.append('f')
+        eq_(self.b, ['b', 'c', 'd', 'e', 'f'])
+
+    def test_extend_empty(self):
+        self.b.extend("abc")
+        eq_(self.b, ['a', 'b', 'c'])
+
+    def test_extend_overrun(self):
+        self.b.extend("abc")
+        self.b.extend("defg")
+        eq_(self.b, ['c', 'd', 'e', 'f', 'g'])
+
+    def test_extend_full(self):
+        self.b.extend("abcde")
+        self.b.extend("fgh")
+        eq_(self.b, ['d', 'e', 'f', 'g', 'h'])

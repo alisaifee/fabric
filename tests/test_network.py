@@ -5,18 +5,20 @@ import copy
 import getpass
 import sys
 
-import ssh
-from nose.tools import with_setup, ok_
+from nose.tools import with_setup, ok_, raises
 from fudge import (Fake, clear_calls, clear_expectations, patch_object, verify,
     with_patched_object, patched_context, with_fakes)
 
 from fabric.context_managers import settings, hide, show
 from fabric.network import (HostConnectionCache, join_host_strings, normalize,
-    denormalize)
+    denormalize, key_filenames, ssh)
 from fabric.io import output_loop
 import fabric.network  # So I can call patch_object correctly. Sigh.
 from fabric.state import env, output, _get_system_username
 from fabric.operations import run, sudo, prompt
+from fabric.exceptions import NetworkError
+from fabric.tasks import execute
+from fabric import utils # for patching
 
 from utils import *
 from server import (server, PORT, RESPONSES, PASSWORDS, CLIENT_PRIVKEY, USER,
@@ -45,6 +47,29 @@ class TestNetwork(FabricTest):
             yield eq_, normalize(input), normalize(output_)
             del eq_.description
 
+    def test_normalization_for_ipv6(self):
+        """
+        normalize() will accept IPv6 notation and can separate host and port
+        """
+        username = _get_system_username()
+        for description, input, output_ in (
+            ("Full IPv6 address",
+                '2001:DB8:0:0:0:0:0:1', (username, '2001:DB8:0:0:0:0:0:1', '22')),
+            ("IPv6 address in short form",
+                '2001:DB8::1', (username, '2001:DB8::1', '22')),
+            ("IPv6 localhost",
+                '::1', (username, '::1', '22')),
+            ("Square brackets are required to separate non-standard port from IPv6 address",
+                '[2001:DB8::1]:1222', (username, '2001:DB8::1', '1222')),
+            ("Username and IPv6 address",
+                'user@2001:DB8::1', ('user', '2001:DB8::1', '22')),
+            ("Username and IPv6 address with non-standard port",
+                'user@[2001:DB8::1]:1222', ('user', '2001:DB8::1', '1222')),
+        ):
+            eq_.description = "Host-string IPv6 normalization: %s" % description
+            yield eq_, normalize(input), output_
+            del eq_.description
+
     def test_normalization_without_port(self):
         """
         normalize() and join_host_strings() omit port if omit_port given
@@ -52,6 +77,23 @@ class TestNetwork(FabricTest):
         eq_(
             join_host_strings(*normalize('user@localhost', omit_port=True)),
             'user@localhost'
+        )
+
+    def test_ipv6_host_strings_join(self):
+        """
+        join_host_strings() should use square brackets only for IPv6 and if port is given
+        """
+        eq_(
+            join_host_strings('user', '2001:DB8::1'),
+            'user@2001:DB8::1'
+        )
+        eq_(
+            join_host_strings('user', '2001:DB8::1', '1222'),
+            'user@[2001:DB8::1]:1222'
+        )
+        eq_(
+            join_host_strings('user', '192.168.0.0', '1222'),
+            'user@192.168.0.0:1222'
         )
 
     def test_nonword_character_in_username(self):
@@ -93,6 +135,8 @@ class TestNetwork(FabricTest):
                 'user@localhost', 'user@localhost:22'),
             ("Both username and port",
                 'localhost', username + '@localhost:22'),
+            ("IPv6 address",
+                '2001:DB8::1', username + '@[2001:DB8::1]:22'),
         ):
             eq_.description = "Host-string denormalization: %s" % description
             yield eq_, denormalize(string1), denormalize(string2)
@@ -280,7 +324,7 @@ class TestNetwork(FabricTest):
         output.everything = False
         with password_response(PASSWORDS[env.user], silent=False):
             run("ls /simple")
-        regex = r'^\[%s\] Login password: ' % env.host_string
+        regex = r'^\[%s\] Login password for \'%s\': ' % (env.host_string, env.user)
         assert_contains(regex, sys.stderr.getvalue())
 
     @mock_streams('stderr')
@@ -295,7 +339,7 @@ class TestNetwork(FabricTest):
         output.everything = False
         with password_response(CLIENT_PRIVKEY_PASSPHRASE, silent=False):
             run("ls /simple")
-        regex = r'^\[%s\] Login password: ' % env.host_string
+        regex = r'^\[%s\] Login password for \'%s\': ' % (env.host_string, env.user)
         assert_contains(regex, sys.stderr.getvalue())
 
     def test_sudo_prompt_display_passthrough(self):
@@ -326,20 +370,23 @@ class TestNetwork(FabricTest):
         if display_output:
             expected = """
 [%(prefix)s] sudo: oneliner
-[%(prefix)s] Login password: 
+[%(prefix)s] Login password for '%(user)s': 
 [%(prefix)s] out: sudo password:
 [%(prefix)s] out: Sorry, try again.
 [%(prefix)s] out: sudo password: 
 [%(prefix)s] out: result
-""" % {'prefix': env.host_string}
+""" % {'prefix': env.host_string, 'user': env.user}
         else:
             # Note lack of first sudo prompt (as it's autoresponded to) and of
             # course the actual result output.
             expected = """
 [%(prefix)s] sudo: oneliner
-[%(prefix)s] Login password: 
+[%(prefix)s] Login password for '%(user)s': 
 [%(prefix)s] out: Sorry, try again.
-[%(prefix)s] out: sudo password: """ % {'prefix': env.host_string}
+[%(prefix)s] out: sudo password: """ % {
+    'prefix': env.host_string,
+    'user': env.user
+}
         eq_(expected[1:], sys.stdall.getvalue())
 
     @mock_streams('both')
@@ -362,7 +409,7 @@ class TestNetwork(FabricTest):
             sudo('twoliner')
         expected = """
 [%(prefix)s] sudo: oneliner
-[%(prefix)s] Login password: 
+[%(prefix)s] Login password for '%(user)s': 
 [%(prefix)s] out: sudo password:
 [%(prefix)s] out: Sorry, try again.
 [%(prefix)s] out: sudo password: 
@@ -371,8 +418,8 @@ class TestNetwork(FabricTest):
 [%(prefix)s] out: sudo password:
 [%(prefix)s] out: result1
 [%(prefix)s] out: result2
-""" % {'prefix': env.host_string}
-        eq_(expected[1:], sys.stdall.getvalue())
+""" % {'prefix': env.host_string, 'user': env.user}
+        eq_(sys.stdall.getvalue(), expected[1:])
 
     @mock_streams('both')
     @server(pubkeys=True, responses={'silent': '', 'normal': 'foo'})
@@ -398,12 +445,12 @@ class TestNetwork(FabricTest):
                 run('silent')
         expected = """
 [%(prefix)s] run: normal
-[%(prefix)s] Login password: 
+[%(prefix)s] Login password for '%(user)s': 
 [%(prefix)s] out: foo
 [%(prefix)s] run: silent
 [%(prefix)s] run: normal
 [%(prefix)s] out: foo
-""" % {'prefix': env.host_string}
+""" % {'prefix': env.host_string, 'user': env.user}
         eq_(expected[1:], sys.stdall.getvalue())
 
     @mock_streams('both')
@@ -426,12 +473,12 @@ class TestNetwork(FabricTest):
             run('twoliner')
         expected = """
 [%(prefix)s] run: oneliner
-[%(prefix)s] Login password: 
+[%(prefix)s] Login password for '%(user)s': 
 [%(prefix)s] out: result
 [%(prefix)s] run: twoliner
 [%(prefix)s] out: result1
 [%(prefix)s] out: result2
-""" % {'prefix': env.host_string}
+""" % {'prefix': env.host_string, 'user': env.user}
         eq_(expected[1:], sys.stdall.getvalue())
 
     @mock_streams('both')
@@ -455,10 +502,176 @@ class TestNetwork(FabricTest):
                 run('twoliner')
         expected = """
 [%(prefix)s] run: oneliner
-[%(prefix)s] Login password: 
+[%(prefix)s] Login password for '%(user)s': 
 result
 [%(prefix)s] run: twoliner
 result1
 result2
-""" % {'prefix': env.host_string}
+""" % {'prefix': env.host_string, 'user': env.user}
         eq_(expected[1:], sys.stdall.getvalue())
+
+    @server()
+    def test_env_host_set_when_host_prompt_used(self):
+        """
+        Ensure env.host is set during host prompting
+        """
+        copied_host_string = str(env.host_string)
+        fake = Fake('raw_input', callable=True).returns(copied_host_string)
+        env.host_string = None
+        env.host = None
+        with settings(hide('everything'), patched_input(fake)):
+            run("ls /")
+        # Ensure it did set host_string back to old value
+        eq_(env.host_string, copied_host_string)
+        # Ensure env.host is correct
+        eq_(env.host, normalize(copied_host_string)[1])
+
+
+def subtask():
+    run("This should never execute")
+
+class TestConnections(FabricTest):
+    @aborts
+    def test_should_abort_when_cannot_connect(self):
+        """
+        By default, connecting to a nonexistent server should abort.
+        """
+        with hide('everything'):
+            execute(subtask, hosts=['nope.nonexistent.com'])
+
+    def test_should_warn_when_skip_bad_hosts_is_True(self):
+        """
+        env.skip_bad_hosts = True => execute() skips current host
+        """
+        with settings(hide('everything'), skip_bad_hosts=True):
+            execute(subtask, hosts=['nope.nonexistent.com'])
+
+
+class TestSSHConfig(FabricTest):
+    def env_setup(self):
+        super(TestSSHConfig, self).env_setup()
+        env.use_ssh_config = True
+        env.ssh_config_path = support("ssh_config")
+        # Undo the changes FabricTest makes to env for server support
+        env.user = env.local_user
+        env.port = env.default_port
+
+    def test_global_user_with_default_env(self):
+        """
+        Global User should override default env.user
+        """
+        eq_(normalize("localhost")[0], "satan")
+
+    def test_global_user_with_nondefault_env(self):
+        """
+        Global User should NOT override nondefault env.user
+        """
+        with settings(user="foo"):
+            eq_(normalize("localhost")[0], "foo")
+
+    def test_specific_user_with_default_env(self):
+        """
+        Host-specific User should override default env.user
+        """
+        eq_(normalize("myhost")[0], "neighbor")
+
+    def test_user_vs_host_string_value(self):
+        """
+        SSH-config derived user should NOT override host-string user value
+        """
+        eq_(normalize("myuser@localhost")[0], "myuser")
+        eq_(normalize("myuser@myhost")[0], "myuser")
+
+    def test_global_port_with_default_env(self):
+        """
+        Global Port should override default env.port
+        """
+        eq_(normalize("localhost")[2], "666")
+
+    def test_global_port_with_nondefault_env(self):
+        """
+        Global Port should NOT override nondefault env.port
+        """
+        with settings(port="777"):
+            eq_(normalize("localhost")[2], "777")
+
+    def test_specific_port_with_default_env(self):
+        """
+        Host-specific Port should override default env.port
+        """
+        eq_(normalize("myhost")[2], "664")
+
+    def test_port_vs_host_string_value(self):
+        """
+        SSH-config derived port should NOT override host-string port value
+        """
+        eq_(normalize("localhost:123")[2], "123")
+        eq_(normalize("myhost:123")[2], "123")
+
+    def test_hostname_alias(self):
+        """
+        Hostname setting overrides host string's host value
+        """
+        eq_(normalize("localhost")[1], "localhost")
+        eq_(normalize("myalias")[1], "otherhost")
+
+    @with_patched_object(utils, 'warn', Fake('warn', callable=True,
+        expect_call=True))
+    def test_warns_with_bad_config_file_path(self):
+        # use_ssh_config is already set in our env_setup()
+        with settings(hide('everything'), ssh_config_path="nope_bad_lol"):
+            normalize('foo')
+
+    @server()
+    def test_real_connection(self):
+        """
+        Test-server connection using ssh_config values
+        """
+        with settings(
+            hide('everything'),
+            ssh_config_path=support("testserver_ssh_config"),
+            host_string='testserver',
+        ):
+            ok_(run("ls /simple").succeeded)
+
+
+class TestKeyFilenames(FabricTest):
+    def test_empty_everything(self):
+        """
+        No env.key_filename and no ssh_config = empty list
+        """
+        with settings(use_ssh_config=False):
+            with settings(key_filename=""):
+                eq_(key_filenames(), [])
+            with settings(key_filename=[]):
+                eq_(key_filenames(), [])
+
+    def test_just_env(self):
+        """
+        Valid env.key_filename and no ssh_config = just env
+        """
+        with settings(use_ssh_config=False):
+            with settings(key_filename="mykey"):
+                eq_(key_filenames(), ["mykey"])
+            with settings(key_filename=["foo", "bar"]):
+                eq_(key_filenames(), ["foo", "bar"])
+
+    def test_just_ssh_config(self):
+        """
+        No env.key_filename + valid ssh_config = ssh value
+        """
+        with settings(use_ssh_config=True, ssh_config_path=support("ssh_config")):
+            for val in ["", []]:
+                with settings(key_filename=val):
+                    eq_(key_filenames(), ["foobar.pub"])
+
+    def test_both(self):
+        """
+        Both env.key_filename + valid ssh_config = both show up w/ env var first
+        """
+        with settings(use_ssh_config=True, ssh_config_path=support("ssh_config")):
+            with settings(key_filename="bizbaz.pub"):
+                eq_(key_filenames(), ["bizbaz.pub", "foobar.pub"])
+            with settings(key_filename=["bizbaz.pub", "whatever.pub"]):
+                expected = ["bizbaz.pub", "whatever.pub", "foobar.pub"]
+                eq_(key_filenames(), expected)

@@ -1,21 +1,23 @@
 """
 Useful non-core functionality, e.g. functions composing multiple operations.
 """
+from __future__ import with_statement
 
 from os import getcwd, sep
 import os.path
 from datetime import datetime
 from tempfile import mkdtemp
 
-from fabric.network import needs_host
+from fabric.network import needs_host, key_filenames, normalize
 from fabric.operations import local, run, put
 from fabric.state import env, output
+from fabric.context_managers import cd
 
 __all__ = ['rsync_project', 'upload_project']
 
 @needs_host
 def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
-    extra_opts=''):
+    extra_opts='', ssh_opts='', capture=False, upload=True):
     """
     Synchronize a remote directory with the current project directory via rsync.
 
@@ -63,6 +65,11 @@ def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
       longer exist locally. Defaults to False.
     * ``extra_opts``: an optional, arbitrary string which you may use to pass
       custom arguments or options to ``rsync``.
+    * ``ssh_opts``: Like ``extra_opts`` but specifically for the SSH options
+      string (rsync's ``--rsh`` flag.)
+    * ``capture``: Sent directly into an inner `~fabric.operations.local` call.
+    * ``upload``: a boolean controlling whether file synchronization is
+      performed up or downstream. Upstream by default.
 
     Furthermore, this function transparently honors Fabric's port and SSH key
     settings. Calling this function when the current host string contains a
@@ -75,6 +82,10 @@ def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
         rsync [--delete] [--exclude exclude[0][, --exclude[1][, ...]]] \\
             -pthrvz [extra_opts] <local_dir> <host_string>:<remote_dir>
 
+    .. versionadded:: 1.4.0
+        The ``ssh_opts`` keyword argument.
+    .. versionadded:: 1.4.1
+        The ``capture`` keyword argument.
     """
     # Turn single-string exclude into a one-item list for consistency
     if not hasattr(exclude, '__iter__'):
@@ -85,18 +96,17 @@ def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
     exclusions = tuple([str(s).replace('"', '\\\\"') for s in exclude])
     # Honor SSH key(s)
     key_string = ""
-    if env.key_filename:
-        keys = env.key_filename
-        # For ease of use, coerce stringish key filename into list
-        if not isinstance(env.key_filename, (list, tuple)):
-            keys = [keys]
+    keys = key_filenames()
+    if keys:
         key_string = "-i " + " -i ".join(keys)
-    # Honor nonstandard port
-    port_string = ("-p %s" % env.port) if (env.port != '22') else ""
+    # Port
+    user, host, port = normalize(env.host_string)
+    port_string = "-p %s" % port
     # RSH
     rsh_string = ""
-    if key_string or port_string:
-        rsh_string = "--rsh='ssh %s %s'" % (port_string, key_string)
+    rsh_parts = [key_string, port_string, ssh_opts]
+    if any(rsh_parts):
+        rsh_string = "--rsh='ssh %s'" % " ".join(rsh_parts)
     # Set up options part of string
     options_map = {
         'delete': '--delete' if delete else '',
@@ -109,11 +119,20 @@ def rsync_project(remote_dir, local_dir=None, exclude=(), delete=False,
     if local_dir is None:
         local_dir = '../' + getcwd().split(sep)[-1]
     # Create and run final command string
-    cmd = "rsync %s %s %s@%s:%s" % (options, local_dir, env.user,
-        env.host, remote_dir)
+    if host.count(':') > 1:
+        # Square brackets are mandatory for IPv6 rsync address,
+        # even if port number is not specified
+        remote_prefix = "[%s@%s]" % (user, host)
+    else:
+        remote_prefix = "%s@%s" % (user, host)
+    if upload:
+        cmd = "rsync %s %s %s:%s" % (options, local_dir, remote_prefix, remote_dir)
+    else:
+        cmd = "rsync %s %s:%s %s" % (options, remote_prefix, remote_dir, local_dir)
+
     if output.running:
         print("[%s] rsync_project: %s" % (env.host_string, cmd))
-    return local(cmd)
+    return local(cmd, capture=capture)
 
 
 def upload_project(local_dir=None, remote_dir=""):
@@ -122,7 +141,7 @@ def upload_project(local_dir=None, remote_dir=""):
 
     ``local_dir`` specifies the local project directory to upload, and defaults
     to the current working directory.
-    
+
     ``remote_dir`` specifies the target directory to upload into (meaning that
     a copy of ``local_dir`` will appear as a subdirectory of ``remote_dir``)
     and defaults to the remote user's home directory.
@@ -149,9 +168,10 @@ def upload_project(local_dir=None, remote_dir=""):
         tar_path = os.path.join(tmp_folder, tar_file)
         local("tar -czf %s -C %s %s" % (tar_path, local_path, local_name))
         put(tar_path, target_tar)
-        try:
-            run("tar -xzf %s" % tar_file)
-        finally:
-            run("rm -f %s" % tar_file)
+        with cd(remote_dir):
+            try:
+                run("tar -xzf %s" % tar_file)
+            finally:
+                run("rm -f %s" % tar_file)
     finally:
         local("rm -rf %s" % tmp_folder)

@@ -94,6 +94,9 @@ first argument (see :ref:`task-decorator-and-classes` for details.)
   take precedence.
 * ``default``: A boolean value determining whether the decorated task also
   stands in for its containing module as a task name. See :ref:`default-tasks`.
+* ``name``: A string setting the name this task appears as to the command-line
+  interface. Useful for task names that would otherwise shadow Python builtins
+  (which is technically legal but frowned upon and bug-prone.)
 
 .. _task-aliases:
 
@@ -266,7 +269,8 @@ Here's a brief and somewhat contrived example to make this obvious::
     from fabric.tasks import Task
 
     class CustomTask(Task):
-        def __init__(self, func, myarg):
+        def __init__(self, func, myarg, *args, **kwargs):
+            super(CustomTask, self).__init__(*args, **kwargs)
             self.func = func
             self.myarg = myarg
 
